@@ -4,6 +4,117 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
 <title>APEX</title>
+
+<script>
+const SB_URL = 'https://ecxnoyrnsozvfbbgzhuu.supabase.co';
+const SB_KEY = 'sb_publishable_dJAiYEcRWJbt0DQiaznLIQ_b7tTECNh';
+const UID = 'default_user';
+
+async function sbReq(method, table, body, query) {
+  const url = SB_URL + '/rest/v1/' + table + (query ? '?' + query : '');
+  const res = await fetch(url, {
+    method,
+    headers: {
+      'apikey': SB_KEY,
+      'Authorization': 'Bearer ' + SB_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+};
+
+// ── Load all data from Supabase ──
+async function sbLoad() {
+  try {
+    const [logs, sp, rl, tp] = await Promise.all([
+      sbReq('GET', 'workout_logs', null, 'user_id=eq.' + UID + '&order=created_at.desc'),
+      sbReq('GET', 'set_progress', null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1'),
+      sbReq('GET', 'run_logs',  null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1'),
+      sbReq('GET', 'training_plans', null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1')
+    ]);
+
+    wLog = (logs || []).map(l => ({
+      plan: l.plan,
+      date: l.date,
+      totalSets: l.total_sets,
+      durationSecs: l.duration_secs,
+      exercises: l.exercises || [],
+      newPRs: l.new_prs || []
+    }));
+
+    sP   = (sp && sp[0])  ? sp[0].data  : {};
+    rLog = (rl && rl[0])  ? rl[0].data  : [];
+    plans = (tp && tp[0]) ? tp[0].data  : JSON.parse(JSON.stringify(DEFAULT_PLANS));
+
+    // cache locally
+    try { localStorage.setItem('trainapp_cache', JSON.stringify({wLog,sP,rLog,plans})); } catch(e) {}
+  } catch(err) {
+    console.error('Supabase load error:', err);
+    // fallback to cache
+    try {
+      const d = JSON.parse(localStorage.getItem('trainapp_cache') || '{}');
+      wLog  = d.wLog  || [];
+      sP    = d.sP    || {};
+      rLog  = d.rLog  || [];
+      plans = d.plans || JSON.parse(JSON.stringify(DEFAULT_PLANS));
+    } catch(e) { plans = JSON.parse(JSON.stringify(DEFAULT_PLANS)); }
+  }
+}
+
+// ── Save all data to Supabase ──
+async function sbSave() {
+  try {
+    // cache locally first
+    try { localStorage.setItem('trainapp_cache', JSON.stringify({wLog,sP,rLog,plans})); } catch(e) {}
+
+    // set_progress: upsert single row
+    const spRows = await sbReq('GET', 'set_progress', null, 'user_id=eq.' + UID);
+    if (spRows && spRows.length > 0) {
+      await sbReq('PATCH', 'set_progress', {data: sP, updated_at: new Date().toISOString()}, 'user_id=eq.' + UID);
+    } else {
+      await sbReq('POST', 'set_progress', {user_id: UID, data: sP});
+    }
+
+    // run_logs: upsert single row
+    const rlRows = await sbReq('GET', 'run_logs', null, 'user_id=eq.' + UID);
+    if (rlRows && rlRows.length > 0) {
+      await sbReq('PATCH', 'run_logs', {data: rLog, updated_at: new Date().toISOString()}, 'user_id=eq.' + UID);
+    } else {
+      await sbReq('POST', 'run_logs', {user_id: UID, data: rLog});
+    }
+
+    // training_plans: upsert single row
+    const tpRows = await sbReq('GET', 'training_plans', null, 'user_id=eq.' + UID);
+    if (tpRows && tpRows.length > 0) {
+      await sbReq('PATCH', 'training_plans', {data: plans, updated_at: new Date().toISOString()}, 'user_id=eq.' + UID);
+    } else {
+      await sbReq('POST', 'training_plans', {user_id: UID, data: plans});
+    }
+  } catch(err) {
+    console.error('Supabase save error:', err);
+  }
+}
+
+// ── Save workout log entry ──
+async function sbSaveWorkout(entry) {
+  try {
+    await sbReq('POST', 'workout_logs', {
+      user_id: UID,
+      plan: entry.plan,
+      date: entry.date,
+      total_sets: entry.totalSets,
+      duration_secs: entry.durationSecs,
+      exercises: entry.exercises,
+      new_prs: entry.newPRs || []
+    });
+  } catch(err) {
+    console.error('Supabase workout save error:', err);
+  }
+}
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Crimson+Pro:ital,wght@0,400;1,300&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
@@ -176,12 +287,16 @@ function prefillMuscles(){
   });
   save();
 }
-try{
-  const d=JSON.parse(localStorage.getItem("trainapp_v1")||"{}");
+// Data will be loaded from Supabase after DOM ready
+try {
+  const d=JSON.parse(localStorage.getItem("trainapp_cache")||"{}");
   wLog=d.wLog||[];sP=d.sP||{};rLog=d.rLog||[];
   plans=d.plans?d.plans:JSON.parse(JSON.stringify(DEFAULT_PLANS));
 }catch{plans=JSON.parse(JSON.stringify(DEFAULT_PLANS));}
-function save(){try{localStorage.setItem("trainapp_v1",JSON.stringify({wLog,sP,rLog,plans}));}catch{}}
+function save(){
+  try{localStorage.setItem("trainapp_cache",JSON.stringify({wLog,sP,rLog,plans}));}catch{}
+  sbSave();
+}
 
 /* ROUTER */
 let tab="home";
@@ -670,7 +785,9 @@ function finishW(){
     exercises[ex.name]=wx.ss[ei].filter(s=>s.done).map(s=>({reps:s.reps,kg:s.kg}));
   });
   const planLabel=(plans[wx.planId]||DEFAULT_PLANS[wx.planId]||{label:wx.planId?.toUpperCase()}).label;
-  wLog.push({plan:planLabel,date:new Date().toLocaleDateString("de-DE"),totalSets,exercises,durationSecs});
+  const _entry={plan:planLabel,date:new Date().toLocaleDateString("de-DE"),totalSets,exercises,durationSecs};
+  wLog.push(_entry);
+  sbSaveWorkout(_entry);
   wx.newPRs=checkNewPRs();
   save();wx.phase="done";renderWorkout();
 }
@@ -2053,6 +2170,16 @@ function deletePlan(id){
 }
 
 render();
+</script>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  sbLoad().then(() => {
+    // re-render after load
+    if(typeof render === "function") render();
+    if(typeof go === "function") go("home");
+  });
+});
 </script>
 </body>
 </html>
