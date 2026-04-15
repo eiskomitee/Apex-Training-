@@ -181,28 +181,7 @@ try{
   wLog=d.wLog||[];sP=d.sP||{};rLog=d.rLog||[];
   plans=d.plans?d.plans:JSON.parse(JSON.stringify(DEFAULT_PLANS));
 }catch{plans=JSON.parse(JSON.stringify(DEFAULT_PLANS));}
-// Restore active workout if page was reloaded mid-training
-try{
-  const wxd=JSON.parse(localStorage.getItem("trainapp_wx")||"null");
-  if(wxd&&wxd.phase==="active"&&wxd.planId&&wxd.exs&&wxd.ss){
-    wx={phase:"active",planId:wxd.planId,exs:wxd.exs,ss:wxd.ss,
-        etimer:{on:false,ei:0,total:0,left:0,iv:null},
-        newPRs:wxd.newPRs||[],startTime:wxd.startTime||Date.now(),clockIv:null};
-    tab="workout";
-  }
-}catch{}
 function save(){try{localStorage.setItem("trainapp_v1",JSON.stringify({wLog,sP,rLog,plans}));}catch{}}
-function saveWx(){
-  if(wx.phase==="active"){
-    try{localStorage.setItem("trainapp_wx",JSON.stringify({
-      phase:wx.phase,planId:wx.planId,exs:wx.exs,ss:wx.ss,
-      startTime:wx.startTime,newPRs:wx.newPRs||[]
-    }));}catch{}
-  } else {
-    try{localStorage.removeItem("trainapp_wx");}catch{}
-  }
-}
-function clearWx(){try{localStorage.removeItem("trainapp_wx");}catch{}}
 
 /* ROUTER */
 let tab="home";
@@ -273,10 +252,14 @@ function homeHTML(){
     const hasRowing=wLogWeek.some(w=>w.date===dateStr&&(w.plan==="ROWING"||w.plan==="RUDERN"));
     const hasRun=rLogWeek.some(r=>r.date===dateStr);
     const active=hasWorkout||hasRowing||hasRun;
-    // colors per type: workout=green, rowing=orange, run=blue
-    const types=[hasWorkout,hasRowing,hasRun].filter(Boolean).length;
-    const dot=types>1?"#a78bfa":hasWorkout?"#22c55e":hasRowing?"#ff5c1a":hasRun?"#3b82f6":null;
-    return {label,isToday,active,dot,dateStr,hasWorkout,hasRowing,hasRun};
+    // Use actual plan color from plans editor
+    const workoutEntry=wLogWeek.find(w=>w.date===dateStr&&w.plan!=="ROWING");
+    const workoutColor=workoutEntry ? (() => {
+      const planKey=Object.keys(plans).find(k=>plans[k].label===workoutEntry.plan);
+      return (planKey && plans[planKey] && plans[planKey].color) ? plans[planKey].color : "#22c55e";
+    })() : "#22c55e";
+    const dot=hasWorkout?workoutColor:hasRowing?"#ff5c1a":hasRun?"#3b82f6":null;
+    return {label,isToday,active,dot,dateStr,hasWorkout,hasRowing,hasRun,workoutColor};
   });
 
   // All-time totals
@@ -314,7 +297,7 @@ function homeHTML(){
             <div style="width:28px;height:28px;border-radius:50%;margin:0 auto;
               border:2px solid ${d.isToday?"#eceae4":"#252836"};
               display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
-              ${d.hasWorkout?`<div style="width:7px;height:7px;border-radius:50%;background:#22c55e"></div>`:""}
+              ${d.hasWorkout?`<div style="width:7px;height:7px;border-radius:50%;background:${d.workoutColor||"#22c55e"}"></div>`:""}
               ${d.hasRowing?`<div style="width:7px;height:7px;border-radius:50%;background:#ff5c1a"></div>`:""}
               ${d.hasRun?`<div style="width:7px;height:7px;border-radius:50%;background:#3b82f6"></div>`:""}
               ${!d.hasWorkout&&!d.hasRowing&&!d.hasRun&&d.isToday?`<div style="width:5px;height:5px;border-radius:50%;background:#3a3d50"></div>`:""}
@@ -441,14 +424,12 @@ function fmtDur(secs){const h=Math.floor(secs/3600),m=Math.floor((secs%3600)/60)
 function renderWorkout(){
   const app=document.getElementById("app");
   if(wx.phase==="select"){app.innerHTML=wSelectHTML();return;}
-  if(wx.phase==="done"){app.innerHTML=wDoneHTML();clearWx();return;}
-  saveWx();
+  if(wx.phase==="done"){app.innerHTML=wDoneHTML();return;}
   app.innerHTML=wActiveHTML();
   // bind inputs after render
   document.querySelectorAll(".s-inp").forEach(inp=>{
     inp.addEventListener("input",e=>{
       wx.ss[+e.target.dataset.ei][+e.target.dataset.si][e.target.dataset.f]=e.target.value;
-      saveWx();
     });
   });
   // long-press to delete set (600ms hold)
@@ -510,7 +491,7 @@ function wActiveHTML(){
   const allDone=done===total&&total>0;
   return `<div class="screen" style="padding-top:16px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <button onclick="if(wx.etimer.iv)clearInterval(wx.etimer.iv);wx.phase='select';clearWx();tab='workout';render()" style="background:#252836;border:none;color:#6a6d80;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px">← ABBRUCH</button>
+      <button onclick="if(wx.etimer.iv)clearInterval(wx.etimer.iv);wx.phase='select';tab='workout';render()" style="background:#252836;border:none;color:#6a6d80;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px">← ABBRUCH</button>
       <div style="text-align:center">
         <div class="bc" style="font-weight:800;font-size:12px;letter-spacing:2px;color:${ac}">${wx.planId?.toUpperCase()}</div>
         <div id="workout-clock" class="bc" style="font-size:11px;color:#4a4d5e;margin-top:1px">${wx.startTime?fmtDur(Math.floor((Date.now()-wx.startTime)/1000)):"0s"}</div>
@@ -620,7 +601,6 @@ function timeRowHTML(ei,si,ex,s,ac){
 
 function togSet(ei,si){
   wx.ss[ei][si].done=!wx.ss[ei][si].done;
-  saveWx();
   renderWorkout();
 }
 
@@ -1450,7 +1430,7 @@ function historyHTML(){
     </div>
     <div style="background:#252836;border-radius:9px;padding:10px 12px;margin-bottom:8px">
       <div class="bc" style="font-size:10px;letter-spacing:1px;color:#4a4d5e;margin-bottom:3px">ℹ️ DATENSPEICHERUNG</div>
-      <div class="cp" style="font-size:12px;color:#7a7d8f;line-height:1.5">Daten werden lokal in deinem Browser gespeichert (localStorage). Sie bleiben erhalten bis du den Browser-Speicher manuell leerst. Regelmäßige Backups schützen deine Daten dauerhaft.</div>
+      <div class="cp" style="font-size:12px;color:#7a7d8f;line-height:1.5">Daten werden sicher in der Cloud gespeichert (Supabase). Sie bleiben auf allen Geräten erhalten – auch bei neuem Handy oder gelöschtem Browser-Cache. Backups bieten zusätzliche Sicherheit.</div>
     </div>
     <div style="height:16px"></div>
   </div>`;}
