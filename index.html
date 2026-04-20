@@ -4,115 +4,6 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
 <title>APEX</title>
-
-<script>
-const SB_URL = 'https://ecxnoyrnsozvfbbgzhuu.supabase.co';
-const SB_KEY = 'sb_publishable_dJAiYEcRWJbt0DQiaznLIQ_b7tTECNh';
-const UID = 'default_user';
-
-async function sbReq(method, table, body, query) {
-  const url = SB_URL + '/rest/v1/' + table + (query ? '?' + query : '');
-  const res = await fetch(url, {
-    method,
-    headers: {
-      'apikey': SB_KEY,
-      'Authorization': 'Bearer ' + SB_KEY,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=representation'
-    },
-    body: body ? JSON.stringify(body) : undefined
-  });
-  const text = await res.text();
-  return text ? JSON.parse(text) : null;
-}
-
-async function sbLoad() {
-  try {
-    const [logs, sp, rl, tp] = await Promise.all([
-      sbReq('GET', 'workout_logs', null, 'user_id=eq.' + UID + '&order=created_at.desc'),
-      sbReq('GET', 'set_progress', null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1'),
-      sbReq('GET', 'run_logs', null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1'),
-      sbReq('GET', 'training_plans', null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1')
-    ]);
-    wLog = (logs || []).map(l => ({
-      plan: l.plan, date: l.date, totalSets: l.total_sets,
-      durationSecs: l.duration_secs, exercises: l.exercises || [], newPRs: l.new_prs || []
-    }));
-    sP    = (sp && sp[0]) ? sp[0].data : {};
-    rLog  = (rl && rl[0]) ? rl[0].data : [];
-    plans = (tp && tp[0]) ? tp[0].data : JSON.parse(JSON.stringify(DEFAULT_PLANS));
-    try { localStorage.setItem('trainapp_cache', JSON.stringify({wLog,sP,rLog,plans})); } catch(e) {}
-  } catch(err) {
-    console.error('Supabase load error:', err);
-    try {
-      const d = JSON.parse(localStorage.getItem('trainapp_cache') || localStorage.getItem('trainapp_v1') || '{}');
-      wLog  = d.wLog  || [];
-      sP    = d.sP    || {};
-      rLog  = d.rLog  || [];
-      plans = d.plans || JSON.parse(JSON.stringify(DEFAULT_PLANS));
-    } catch(e) { plans = JSON.parse(JSON.stringify(DEFAULT_PLANS)); }
-  }
-}
-
-async function sbSave() {
-  try {
-    try { localStorage.setItem('trainapp_cache', JSON.stringify({wLog,sP,rLog,plans})); } catch(e) {}
-    const spRows = await sbReq('GET', 'set_progress', null, 'user_id=eq.' + UID);
-    if (spRows && spRows.length > 0) {
-      await sbReq('PATCH', 'set_progress', {data: sP, updated_at: new Date().toISOString()}, 'user_id=eq.' + UID);
-    } else {
-      await sbReq('POST', 'set_progress', {user_id: UID, data: sP});
-    }
-    const rlRows = await sbReq('GET', 'run_logs', null, 'user_id=eq.' + UID);
-    if (rlRows && rlRows.length > 0) {
-      await sbReq('PATCH', 'run_logs', {data: rLog, updated_at: new Date().toISOString()}, 'user_id=eq.' + UID);
-    } else {
-      await sbReq('POST', 'run_logs', {user_id: UID, data: rLog});
-    }
-    const tpRows = await sbReq('GET', 'training_plans', null, 'user_id=eq.' + UID);
-    if (tpRows && tpRows.length > 0) {
-      await sbReq('PATCH', 'training_plans', {data: plans, updated_at: new Date().toISOString()}, 'user_id=eq.' + UID);
-    } else {
-      await sbReq('POST', 'training_plans', {user_id: UID, data: plans});
-    }
-  } catch(err) { console.error('Supabase save error:', err); }
-}
-
-async function sbSaveWorkout(entry) {
-  try {
-    await sbReq('POST', 'workout_logs', {
-      user_id: UID, plan: entry.plan, date: entry.date,
-      total_sets: entry.totalSets, duration_secs: entry.durationSecs,
-      exercises: entry.exercises, new_prs: entry.newPRs || []
-    });
-  } catch(err) { console.error('Supabase workout save error:', err); }
-}
-
-// Migrate old localStorage data to Supabase (runs once)
-async function migrateIfNeeded() {
-  try {
-    const migrated = localStorage.getItem('sb_migrated');
-    if (migrated) return;
-    const old = JSON.parse(localStorage.getItem('trainapp_v1') || '{}');
-    if (!old.wLog && !old.sP && !old.rLog) return;
-    // Check if Supabase already has data
-    const existing = await sbReq('GET', 'workout_logs', null, 'user_id=eq.' + UID + '&limit=1');
-    if (existing && existing.length > 0) { localStorage.setItem('sb_migrated','1'); return; }
-    // Migrate workouts
-    if (old.wLog && old.wLog.length > 0) {
-      for (const w of old.wLog) { await sbSaveWorkout(w); }
-    }
-    // Migrate sP, rLog, plans
-    if (old.sP) sP = old.sP;
-    if (old.rLog) rLog = old.rLog;
-    if (old.plans) plans = old.plans;
-    await sbSave();
-    wLog = old.wLog || [];
-    localStorage.setItem('sb_migrated','1');
-    console.log('Migration complete!');
-  } catch(e) { console.error('Migration error:', e); }
-}
-</script>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Crimson+Pro:ital,wght@0,400;1,300&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
@@ -286,14 +177,32 @@ function prefillMuscles(){
   save();
 }
 try{
-  const d=JSON.parse(localStorage.getItem("trainapp_cache")||localStorage.getItem("trainapp_v1")||"{}");
+  const d=JSON.parse(localStorage.getItem("trainapp_v1")||"{}");
   wLog=d.wLog||[];sP=d.sP||{};rLog=d.rLog||[];
   plans=d.plans?d.plans:JSON.parse(JSON.stringify(DEFAULT_PLANS));
 }catch{plans=JSON.parse(JSON.stringify(DEFAULT_PLANS));}
-function save(){
-  try{localStorage.setItem("trainapp_cache",JSON.stringify({wLog,sP,rLog,plans}));}catch{}
-  sbSave();
+// Restore active workout if page was reloaded mid-training
+try{
+  const wxd=JSON.parse(localStorage.getItem("trainapp_wx")||"null");
+  if(wxd&&wxd.phase==="active"&&wxd.planId&&wxd.exs&&wxd.ss){
+    wx={phase:"active",planId:wxd.planId,exs:wxd.exs,ss:wxd.ss,
+        etimer:{on:false,ei:0,total:0,left:0,iv:null},
+        newPRs:wxd.newPRs||[],startTime:wxd.startTime||Date.now(),clockIv:null};
+    tab="workout";
+  }
+}catch{}
+function save(){try{localStorage.setItem("trainapp_v1",JSON.stringify({wLog,sP,rLog,plans}));}catch{}}
+function saveWx(){
+  if(wx.phase==="active"){
+    try{localStorage.setItem("trainapp_wx",JSON.stringify({
+      phase:wx.phase,planId:wx.planId,exs:wx.exs,ss:wx.ss,
+      startTime:wx.startTime,newPRs:wx.newPRs||[]
+    }));}catch{}
+  } else {
+    try{localStorage.removeItem("trainapp_wx");}catch{}
+  }
 }
+function clearWx(){try{localStorage.removeItem("trainapp_wx");}catch{}}
 
 /* ROUTER */
 let tab="home";
@@ -364,13 +273,10 @@ function homeHTML(){
     const hasRowing=wLogWeek.some(w=>w.date===dateStr&&(w.plan==="ROWING"||w.plan==="RUDERN"));
     const hasRun=rLogWeek.some(r=>r.date===dateStr);
     const active=hasWorkout||hasRowing||hasRun;
-    const workoutEntry=wLogWeek.find(w=>w.date===dateStr&&w.plan!=="ROWING");
-    const workoutColor=workoutEntry ? (() => {
-      const planKey=Object.keys(plans).find(k=>plans[k].label===workoutEntry.plan);
-      return (planKey && plans[planKey] && plans[planKey].color) ? plans[planKey].color : "#22c55e";
-    })() : "#22c55e";
-    const dot=hasWorkout?workoutColor:hasRowing?"#ff5c1a":hasRun?"#3b82f6":null;
-    return {label,isToday,active,dot,dateStr,hasWorkout,hasRowing,hasRun,workoutColor};
+    // colors per type: workout=green, rowing=orange, run=blue
+    const types=[hasWorkout,hasRowing,hasRun].filter(Boolean).length;
+    const dot=types>1?"#a78bfa":hasWorkout?"#22c55e":hasRowing?"#ff5c1a":hasRun?"#3b82f6":null;
+    return {label,isToday,active,dot,dateStr,hasWorkout,hasRowing,hasRun};
   });
 
   // All-time totals
@@ -408,7 +314,7 @@ function homeHTML(){
             <div style="width:28px;height:28px;border-radius:50%;margin:0 auto;
               border:2px solid ${d.isToday?"#eceae4":"#252836"};
               display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
-              ${d.hasWorkout?`<div style="width:7px;height:7px;border-radius:50%;background:${d.workoutColor||"#22c55e"}"></div>`:""}
+              ${d.hasWorkout?`<div style="width:7px;height:7px;border-radius:50%;background:#22c55e"></div>`:""}
               ${d.hasRowing?`<div style="width:7px;height:7px;border-radius:50%;background:#ff5c1a"></div>`:""}
               ${d.hasRun?`<div style="width:7px;height:7px;border-radius:50%;background:#3b82f6"></div>`:""}
               ${!d.hasWorkout&&!d.hasRowing&&!d.hasRun&&d.isToday?`<div style="width:5px;height:5px;border-radius:50%;background:#3a3d50"></div>`:""}
@@ -488,7 +394,7 @@ function startW(id){
   if(wx.etimer.iv)clearInterval(wx.etimer.iv);
   const plan=plans[id]||DEFAULT_PLANS[id];
   const exs=plan?plan.exercises:[];
-  const ss=exs.map(ex=>Array.from({length:ex.sets},()=>({reps:ex.reps!=null?String(ex.reps):"",kg:ex.kg!=null?String(ex.kg):"",secs:ex.secs!=null?String(ex.secs):null,done:false})));
+  const ss=exs.map(ex=>ex.type==="separator"?[]:Array.from({length:ex.sets},()=>({reps:ex.reps!=null?String(ex.reps):"",kg:ex.kg!=null?String(ex.kg):"",secs:ex.secs!=null?String(ex.secs):null,done:false})));
   wx={phase:"active",planId:id,exs,ss,etimer:{on:false,ei:0,total:0,left:0,iv:null},newPRs:[],startTime:Date.now(),clockIv:null};
   unlockAudio();
   wx.clockIv=setInterval(()=>{
@@ -535,12 +441,14 @@ function fmtDur(secs){const h=Math.floor(secs/3600),m=Math.floor((secs%3600)/60)
 function renderWorkout(){
   const app=document.getElementById("app");
   if(wx.phase==="select"){app.innerHTML=wSelectHTML();return;}
-  if(wx.phase==="done"){app.innerHTML=wDoneHTML();return;}
+  if(wx.phase==="done"){app.innerHTML=wDoneHTML();clearWx();return;}
+  saveWx();
   app.innerHTML=wActiveHTML();
   // bind inputs after render
   document.querySelectorAll(".s-inp").forEach(inp=>{
     inp.addEventListener("input",e=>{
       wx.ss[+e.target.dataset.ei][+e.target.dataset.si][e.target.dataset.f]=e.target.value;
+      saveWx();
     });
   });
   // long-press to delete set (600ms hold)
@@ -596,13 +504,13 @@ function workoutHistHTML(){
 
 function wActiveHTML(){
   const ac=planAC();
-  const total=wx.ss.reduce((a,s)=>a+s.length,0);
-  const done=wx.ss.reduce((a,s)=>a+s.filter(r=>r.done).length,0);
+  const total=wx.ss.reduce((a,s,i)=>wx.exs[i]?.type==="separator"?a:a+s.length,0);
+  const done=wx.ss.reduce((a,s,i)=>wx.exs[i]?.type==="separator"?a:a+s.filter(r=>r.done).length,0);
   const pct=total?Math.round(done/total*100):0;
   const allDone=done===total&&total>0;
   return `<div class="screen" style="padding-top:16px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <button onclick="if(wx.etimer.iv)clearInterval(wx.etimer.iv);wx.phase='select';tab='workout';render()" style="background:#252836;border:none;color:#6a6d80;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px">← ABBRUCH</button>
+      <button onclick="if(wx.etimer.iv)clearInterval(wx.etimer.iv);wx.phase='select';clearWx();tab='workout';render()" style="background:#252836;border:none;color:#6a6d80;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px">← ABBRUCH</button>
       <div style="text-align:center">
         <div class="bc" style="font-weight:800;font-size:12px;letter-spacing:2px;color:${ac}">${wx.planId?.toUpperCase()}</div>
         <div id="workout-clock" class="bc" style="font-size:11px;color:#4a4d5e;margin-top:1px">${wx.startTime?fmtDur(Math.floor((Date.now()-wx.startTime)/1000)):"0s"}</div>
@@ -627,6 +535,14 @@ function wActiveHTML(){
 }
 
 function exCardHTML(ex,ei,ac){
+  // Separator – just a divider label, not a real exercise
+  if(ex.type==="separator"){
+    return `<div style="display:flex;align-items:center;gap:10px;margin:14px 0 6px">
+      <div style="flex:1;height:1px;background:#2c2f3d"></div>
+      <div class="bc" style="font-size:10px;letter-spacing:2px;color:${ac};font-weight:800">${ex.name||"──────"}</div>
+      <div style="flex:1;height:1px;background:#2c2f3d"></div>
+    </div>`;
+  }
   const sets=wx.ss[ei];
   const doneN=sets.filter(s=>s.done).length;
   const allDone=doneN===sets.length;
@@ -712,6 +628,7 @@ function timeRowHTML(ei,si,ex,s,ac){
 
 function togSet(ei,si){
   wx.ss[ei][si].done=!wx.ss[ei][si].done;
+  saveWx();
   renderWorkout();
 }
 
@@ -782,12 +699,11 @@ function finishW(){
   const durationSecs=wx.startTime?Math.floor((Date.now()-wx.startTime)/1000):0;
   const exercises={};
   wx.exs.forEach((ex,ei)=>{
+    if(ex.type==="separator")return;
     exercises[ex.name]=wx.ss[ei].filter(s=>s.done).map(s=>({reps:s.reps,kg:s.kg}));
   });
   const planLabel=(plans[wx.planId]||DEFAULT_PLANS[wx.planId]||{label:wx.planId?.toUpperCase()}).label;
-  const _entry={plan:planLabel,date:new Date().toLocaleDateString("de-DE"),totalSets,exercises,durationSecs};
-  wLog.push(_entry);
-  sbSaveWorkout(_entry);
+  wLog.push({plan:planLabel,date:new Date().toLocaleDateString("de-DE"),totalSets,exercises,durationSecs});
   wx.newPRs=checkNewPRs();
   save();wx.phase="done";renderWorkout();
 }
@@ -1347,47 +1263,50 @@ function showImportMsg(txt,ok){
 /* ══ HISTORY ══ */
 /* Muscle group mapping */
 const MUSCLE_MAP={
-  "Kettlebell um die Welt":     {g:["Core","Schultern"],          c:"#a78bfa"},
-  "Kettlebell Around the World":{g:["Core","Schultern"],          c:"#a78bfa"},
-  "Scapular Pull-Ups":          {g:["Rücken","Schultern"],        c:"#60a5fa"},
-  "Klimmzug":                   {g:["Rücken","Schultern","Unterarme"],c:"#60a5fa"},
-  "Latzug (Kabel)":             {g:["Rücken","Schultern"],    c:"#60a5fa"},
-  "Rudern am Kabel sitzend":    {g:["Rücken","Unterarme"],    c:"#60a5fa"},
-  "Kurzhantel Rudern":          {g:["Rücken","Unterarme"],    c:"#60a5fa"},
-  "Invertiertes Rudern":        {g:["Rücken","Unterarme"],    c:"#60a5fa"},
-  "Renegade Rudern":            {g:["Rücken","Core"],         c:"#60a5fa"},
-  "Hollow Hold":                {g:["Core"],                  c:"#34d399"},
-  "Dead Bug":                   {g:["Core"],                  c:"#34d399"},
-  "Beinheben am Barren":        {g:["Core","Unterarme"],      c:"#34d399"},
-  "Beinheben hängend":          {g:["Core","Unterarme"],      c:"#34d399"},
-  "Knieheben liegend":          {g:"Core",             c:"#34d399"},
-  "Seitlicher Plank":           {g:"Core",             c:"#34d399"},
-  "Plank":                      {g:"Core",             c:"#34d399"},
-  "Russian Twist (Gewichtet)":  {g:"Core",             c:"#34d399"},
-  "Ab Wheel":                   {g:"Core",             c:"#34d399"},
-  "Brust Dip (Gewichtet)":      {g:["Brust & Trizeps","Schultern"],c:"#f472b6"},
-  "Brust Dips":                 {g:["Brust & Trizeps","Schultern"],c:"#f472b6"},
-  "Liegestütz":                 {g:["Brust & Trizeps","Schultern"],c:"#f472b6"},
-  "Fliegende (Band)":           {g:["Brust & Trizeps"],       c:"#f472b6"},
-  "Schulterdrücken (LH)":       {g:["Schultern","Brust & Trizeps"],c:"#fb923c"},
-  "Schulterdrücken (Langhantel)":{g:["Schultern","Brust & Trizeps"],c:"#fb923c"},
-  "Face Pull":                  {g:["Schultern","Rücken"],    c:"#fb923c"},
-  "Band Pullaparts":            {g:["Schultern","Rücken"],    c:"#fb923c"},
-  "Band shoulder Dislocates":   {g:"Schultern",        c:"#fb923c"},
-  "Aufrechtes Rudern (Kurzhantel)":{g:"Schultern",     c:"#fb923c"},
-  "Goblet Squat":               {g:["Beine","Core"],          c:"#facc15"},
-  "Squat (Körpergewicht)":      {g:["Beine"],                 c:"#facc15"},
-  "Kettlebell Swing":           {g:["Beine & Po","Core"],     c:"#fbbf24"},
-  "Beckenheben":                {g:"Beine & Po",       c:"#fbbf24"},
-  "Wadenheben stehend":         {g:"Beine",            c:"#facc15"},
-  "Kreuzheben High Pull":       {g:"Rücken & Beine",   c:"#38bdf8"},
-  "Farmers Walk":               {g:"Ganzkörper",       c:"#94a3b8"},
-  "Rudermaschine":              {g:["Ausdauer","Rücken"],     c:"#22c55e"},
-  "Wrist Roller":               {g:"Unterarme",        c:"#e2e8f0"},
-  "Gummi Cross":                {g:["Brust & Trizeps"],       c:"#f472b6"},
-  "Bird Dog":                   {g:"Core",             c:"#34d399"},
-  "Superman":                   {g:"Rücken",           c:"#60a5fa"},
-  "Dead Hang":                  {g:"Rücken",           c:"#60a5fa"},
+  "Kettlebell um die Welt":       {g:["Core","Schultern"],      c:"#a78bfa"},
+  "Kettlebell Around the World":  {g:["Core","Schultern"],      c:"#a78bfa"},
+  "Scapular Pull-Ups":            {g:["Rücken","Schultern"],    c:"#60a5fa"},
+  "Klimmzug":                     {g:["Rücken","Arme"],         c:"#60a5fa"},
+  "Latzug (Kabel)":               {g:["Rücken","Arme"],         c:"#60a5fa"},
+  "Rudern am Kabel sitzend":      {g:["Rücken","Arme"],         c:"#60a5fa"},
+  "Kurzhantel Rudern":            {g:["Rücken","Arme"],         c:"#60a5fa"},
+  "Invertiertes Rudern":          {g:["Rücken","Arme"],         c:"#60a5fa"},
+  "Renegade Rudern":              {g:["Rücken","Core"],         c:"#60a5fa"},
+  "Australian Pull-ups":          {g:["Rücken","Arme"],         c:"#60a5fa"},
+  "Dead Hang":                    {g:["Rücken","Arme"],         c:"#60a5fa"},
+  "Superman":                     {g:["Rücken"],                c:"#60a5fa"},
+  "Hollow Hold":                  {g:["Core"],                  c:"#34d399"},
+  "Dead Bug":                     {g:["Core"],                  c:"#34d399"},
+  "Beinheben am Barren":          {g:["Core","Arme"],           c:"#34d399"},
+  "Beinheben hängend":            {g:["Core","Arme"],           c:"#34d399"},
+  "Knieheben liegend":            {g:["Core"],                  c:"#34d399"},
+  "Seitlicher Plank":             {g:["Core"],                  c:"#34d399"},
+  "Plank":                        {g:["Core"],                  c:"#34d399"},
+  "Russian Twist (Gewichtet)":    {g:["Core"],                  c:"#34d399"},
+  "Ab Wheel":                     {g:["Core"],                  c:"#34d399"},
+  "Bird Dog":                     {g:["Core"],                  c:"#34d399"},
+  "Brust Dip (Gewichtet)":        {g:["Brust","Arme"],          c:"#f472b6"},
+  "Brust Dips":                   {g:["Brust","Arme"],          c:"#f472b6"},
+  "Liegestütz":                   {g:["Brust","Schultern"],     c:"#f472b6"},
+  "Pike Pushups":                 {g:["Schultern","Brust"],     c:"#a78bfa"},
+  "Fliegende (Band)":             {g:["Brust"],                 c:"#f472b6"},
+  "Gummi Cross":                  {g:["Brust"],                 c:"#f472b6"},
+  "Schulterdrücken (LH)":         {g:["Schultern","Arme"],      c:"#a78bfa"},
+  "Schulterdrücken (Langhantel)": {g:["Schultern","Arme"],      c:"#a78bfa"},
+  "Face Pull":                    {g:["Schultern","Rücken"],    c:"#a78bfa"},
+  "Band Pullaparts":              {g:["Schultern","Rücken"],    c:"#a78bfa"},
+  "Band shoulder Dislocates":     {g:["Schultern"],             c:"#a78bfa"},
+  "Aufrechtes Rudern (Kurzhantel)":{g:["Schultern","Arme"],    c:"#a78bfa"},
+  "Goblet Squat":                 {g:["Beine","Core"],          c:"#facc15"},
+  "Squat (Körpergewicht)":        {g:["Beine"],                 c:"#facc15"},
+  "Wadenheben stehend":           {g:["Beine"],                 c:"#facc15"},
+  "Kettlebell Swing":             {g:["Gesäß","Beine","Core"],  c:"#fbbf24"},
+  "Beckenheben":                  {g:["Gesäß"],                 c:"#fbbf24"},
+  "Kreuzheben":                   {g:["Rücken","Beine","Gesäß"],c:"#60a5fa"},
+  "Kreuzheben High Pull":         {g:["Rücken","Beine"],        c:"#60a5fa"},
+  "Farmers Walk":                 {g:["Rücken","Arme","Beine"], c:"#60a5fa"},
+  "Rudermaschine":                {g:["Ausdauer","Rücken"],     c:"#22c55e"},
+  "Wrist Roller":                 {g:["Arme"],                  c:"#fb923c"},
 };
 
 // Track open accordion state
@@ -1422,7 +1341,7 @@ function getDynMuscleMap(){
   Object.values(plans).forEach(p=>{
     p.exercises.forEach(ex=>{
       if(ex.muscle&&ex.muscle.length>0&&!dyn[ex.name]){
-        const colorMap={"Rücken":"#60a5fa","Brust & Trizeps":"#f472b6","Core":"#34d399","Schultern":"#fb923c","Beine":"#facc15","Beine & Po":"#fbbf24","Ganzkörper":"#94a3b8","Ausdauer":"#22c55e","Unterarme":"#e2e8f0"};
+        const colorMap={"Brust":"#f472b6","Rücken":"#60a5fa","Arme":"#fb923c","Schultern":"#a78bfa","Core":"#34d399","Beine":"#facc15","Gesäß":"#fbbf24","Ausdauer":"#22c55e"};
         const grps=Array.isArray(ex.muscle)?ex.muscle:[ex.muscle];
         dyn[ex.name]={g:grps,c:colorMap[grps[0]]||"#94a3b8"};
       }
@@ -1543,7 +1462,7 @@ function historyHTML(){
     </div>
     <div style="background:#252836;border-radius:9px;padding:10px 12px;margin-bottom:8px">
       <div class="bc" style="font-size:10px;letter-spacing:1px;color:#4a4d5e;margin-bottom:3px">ℹ️ DATENSPEICHERUNG</div>
-      <div class="cp" style="font-size:12px;color:#7a7d8f;line-height:1.5">Daten werden sicher in der Cloud gespeichert (Supabase). Sie bleiben auf allen Geräten erhalten – auch bei neuem Handy oder gelöschtem Browser-Cache. Backups bieten zusätzliche Sicherheit.</div>
+      <div class="cp" style="font-size:12px;color:#7a7d8f;line-height:1.5">Daten werden lokal in deinem Browser gespeichert (localStorage). Sie bleiben erhalten bis du den Browser-Speicher manuell leerst. Regelmäßige Backups schützen deine Daten dauerhaft.</div>
     </div>
     <div style="height:16px"></div>
   </div>`;}
@@ -1658,11 +1577,47 @@ function musclesHTML(){
   const muscles=muscleStats();
   const maxSets=Math.max(1,...Object.values(muscles).map(m=>m.sets));
   const sorted=Object.entries(muscles).sort((a,b)=>b[1].sets-a[1].sets);
+  // Spider chart
+  const spiderGroups=["Brust","Rücken","Arme","Schultern","Core","Beine","Gesäß"];
+  const maxSets2=Math.max(1,...spiderGroups.map(g=>muscles[g]?.sets||0));
+  const cx=160,cy=130,r=100;
+  const spiderPts=spiderGroups.map((g,i)=>{
+    const angle=(i/spiderGroups.length)*Math.PI*2-Math.PI/2;
+    const val=(muscles[g]?.sets||0)/maxSets2;
+    return {
+      x:cx+Math.cos(angle)*r*val,
+      y:cy+Math.sin(angle)*r*val,
+      lx:cx+Math.cos(angle)*(r+22),
+      ly:cy+Math.sin(angle)*(r+22),
+      g,val,color:muscles[g]?.color||"#3a3d50"
+    };
+  });
+  const spiderPath=spiderPts.map((p,i)=>i===0?`M${p.x},${p.y}`:`L${p.x},${p.y}`).join(" ")+"Z";
+  // Grid circles
+  const gridCircles=[0.33,0.66,1].map(f=>`<circle cx="${cx}" cy="${cy}" r="${r*f}" fill="none" stroke="#2c2f3d" stroke-width="1"/>`).join("");
+  // Axes
+  const axes=spiderGroups.map((_,i)=>{
+    const angle=(i/spiderGroups.length)*Math.PI*2-Math.PI/2;
+    return `<line x1="${cx}" y1="${cy}" x2="${cx+Math.cos(angle)*r}" y2="${cy+Math.sin(angle)*r}" stroke="#2c2f3d" stroke-width="1"/>`;
+  }).join("");
+
   return `<div class="screen" style="padding-top:16px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
       <button onclick="setStatsView('overview')" style="background:#252836;border:none;color:#6a6d80;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px">← ZURÜCK</button>
       <div class="bc" style="font-weight:900;font-size:20px;color:#a78bfa;letter-spacing:1px">💪 KÖRPERBEREICHE</div>
     </div>
+    ${sorted.length>0?`
+    <div class="card" style="margin-bottom:18px;padding:16px;text-align:center">
+      <div class="bc" style="font-size:10px;letter-spacing:2px;color:#4a4d5e;margin-bottom:12px">MUSKELVERTEILUNG</div>
+      <svg width="100%" viewBox="0 0 320 260" style="display:block">
+        ${gridCircles}${axes}
+        <path d="${spiderPath}" fill="#a78bfa" opacity=".15" stroke="#a78bfa" stroke-width="2"/>
+        ${spiderPts.map(p=>`<circle cx="${p.x}" cy="${p.y}" r="4" fill="${p.color}"/>
+          <text x="${p.lx}" y="${p.ly+4}" text-anchor="middle" fill="${muscles[p.g]?p.color:"#3a3d50"}" font-size="11" font-family="'Barlow Condensed',sans-serif" font-weight="800">${p.g}</text>
+          ${muscles[p.g]?`<text x="${p.lx}" y="${p.ly+16}" text-anchor="middle" fill="#4a4d5e" font-size="9" font-family="'Barlow Condensed',sans-serif">${muscles[p.g].sets}S</text>`:""}
+        `).join("")}
+      </svg>
+    </div>`:""}
     ${sorted.length===0
       ?`<div class="cp" style="color:#4a4d5e;padding:20px 0">Schließe zuerst ein Workout ab</div>`
       :sorted.map(([name,{sets,color,exercises,lastDate,lastSets}],gi)=>{
@@ -2029,9 +1984,11 @@ function edPlanHTML(){
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
       ${p.exercises.map((ex,i)=>`
         <div style="background:#1e2029;border:1px solid #2c2f3d;border-radius:11px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center">
-          <div onclick="edState.view='exercise';edState.exIdx=${i};document.getElementById('app').innerHTML=editorHTML()" style="flex:1;cursor:pointer">
-            <div class="bc" style="font-weight:700;font-size:15px;color:#eceae4">${ex.name}</div>
-            <div class="bc" style="font-size:10px;color:#4a4d5e;margin-top:2px">${ex.sets} Sätze · ${ex.type==="time"?ex.secs+"s":ex.reps+" Wdhl"}${ex.kg?" · "+ex.kg+"kg":""}${ex.muscle?" · "+ex.muscle:""}</div>
+          <div onclick="ex.type!=='separator'&&(edState.view='exercise',edState.exIdx=${i},document.getElementById('app').innerHTML=editorHTML())" style="flex:1;cursor:${ex.type==='separator'?'default':'pointer'}">
+            ${ex.type==='separator'
+              ?`<div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:1px;background:#3a3d50"></div><div class="bc" style="font-size:11px;letter-spacing:2px;color:#7a7d8f">${ex.name||"TRENNER"}</div><div style="flex:1;height:1px;background:#3a3d50"></div></div>`
+              :`<div class="bc" style="font-weight:700;font-size:15px;color:#eceae4">${ex.name}</div>
+            <div class="bc" style="font-size:10px;color:#4a4d5e;margin-top:2px">${ex.sets} Sätze · ${ex.type==="time"?ex.secs+"s":ex.reps+" Wdhl"}${ex.kg?" · "+ex.kg+"kg":""}${ex.muscle?" · "+ex.muscle:""}</div>`}
           </div>
           <div style="display:flex;gap:6px;align-items:center">
             ${i>0?`<button onclick="moveEx(${i},-1)" style="background:#252836;border:none;color:#7a7d8f;width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:12px">↑</button>`:""}
@@ -2040,9 +1997,14 @@ function edPlanHTML(){
           </div>
         </div>`).join("")}
     </div>
-    <button onclick="addEx()" style="width:100%;background:#252836;border:2px dashed #3a3d50;border-radius:11px;padding:13px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;color:#7a7d8f;letter-spacing:1px">
-      + ÜBUNG HINZUFÜGEN
-    </button>
+    <div style="display:flex;gap:8px">
+      <button onclick="addEx()" style="flex:1;background:#252836;border:2px dashed #3a3d50;border-radius:11px;padding:13px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;color:#7a7d8f;letter-spacing:1px">
+        + ÜBUNG
+      </button>
+      <button onclick="addSeparator()" style="flex:1;background:#252836;border:2px dashed #3a3d50;border-radius:11px;padding:13px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;color:#7a7d8f;letter-spacing:1px">
+        ── TRENNER
+      </button>
+    </div>
   </div>`;}
 
 function edExHTML(){
@@ -2091,7 +2053,7 @@ function edExHTML(){
       <div>
         <div class="lbl">MUSKELGRUPPE</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px">
-          ${[["Rücken","#60a5fa"],["Brust & Trizeps","#f472b6"],["Core","#34d399"],["Schultern","#fb923c"],["Beine","#facc15"],["Beine & Po","#fbbf24"],["Ganzkörper","#94a3b8"],["Ausdauer","#22c55e"],["Unterarme","#e2e8f0"]].map(([g,c])=>{
+          ${[["Brust","#f472b6"],["Rücken","#60a5fa"],["Arme","#fb923c"],["Schultern","#a78bfa"],["Core","#34d399"],["Beine","#facc15"],["Gesäß","#fbbf24"],["Ausdauer","#22c55e"]].map(([g,c])=>{
             const muscles=Array.isArray(ex.muscle)?ex.muscle:(ex.muscle?[ex.muscle]:[]);
             const sel=muscles.includes(g);
             return `<button onclick="toggleMuscleGroup('${g}');document.getElementById('app').innerHTML=editorHTML()"
@@ -2153,6 +2115,22 @@ function addEx(){
   edState.view="exercise";
   document.getElementById("app").innerHTML=editorHTML();
 }
+function addSeparator(){
+  showModal(
+    "Trenner hinzufügen",
+    "Wie soll der Trenner heißen?",
+    "HINZUFÜGEN",
+    "#22c55e",
+    ()=>{
+      const name=document.getElementById("separator-name-input")?.value||"WARM-UP";
+      plans[edState.planId].exercises.push({name,type:"separator",sets:0});
+      save();
+      document.getElementById("app").innerHTML=editorHTML();
+    },
+    `<input id="separator-name-input" value="WARM-UP" placeholder="z.B. WARM-UP, HAUPTTEIL, SUPERSATZ"
+      style="width:100%;background:#1e2029;border:1px solid #3a3d50;border-radius:8px;padding:10px;color:#eceae4;font-family:'Barlow Condensed',sans-serif;font-size:16px;margin-top:10px;outline:none"/>`
+  );
+}
 function addNewPlan(){
   const id="plan_"+Date.now();
   plans[id]={label:"NEUER PLAN",color:"#22c55e",exercises:[]};
@@ -2170,16 +2148,6 @@ function deletePlan(id){
 }
 
 render();
-
-// Load from Supabase and migrate old data
-migrateIfNeeded().then(() => {
-  return sbLoad();
-}).then(() => {
-  render();
-}).catch(err => {
-  console.error('Init error:', err);
-  render();
-});
 </script>
 </body>
 </html>
