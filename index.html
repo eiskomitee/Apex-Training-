@@ -4,6 +4,115 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
 <title>APEX</title>
+
+<script>
+const SB_URL = 'https://ecxnoyrnsozvfbbgzhuu.supabase.co';
+const SB_KEY = 'sb_publishable_dJAiYEcRWJbt0DQiaznLIQ_b7tTECNh';
+const UID = 'default_user';
+
+async function sbReq(method, table, body, query) {
+  const url = SB_URL + '/rest/v1/' + table + (query ? '?' + query : '');
+  const res = await fetch(url, {
+    method,
+    headers: {
+      'apikey': SB_KEY,
+      'Authorization': 'Bearer ' + SB_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+async function sbLoad() {
+  try {
+    const [logs, sp, rl, tp] = await Promise.all([
+      sbReq('GET', 'workout_logs', null, 'user_id=eq.' + UID + '&order=created_at.desc'),
+      sbReq('GET', 'set_progress', null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1'),
+      sbReq('GET', 'run_logs', null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1'),
+      sbReq('GET', 'training_plans', null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1')
+    ]);
+    wLog = (logs || []).map(l => ({
+      plan: l.plan, date: l.date, totalSets: l.total_sets,
+      durationSecs: l.duration_secs, exercises: l.exercises || [], newPRs: l.new_prs || []
+    }));
+    sP    = (sp && sp[0]) ? sp[0].data : {};
+    rLog  = (rl && rl[0]) ? rl[0].data : [];
+    plans = (tp && tp[0]) ? tp[0].data : JSON.parse(JSON.stringify(DEFAULT_PLANS));
+    try { localStorage.setItem('trainapp_cache', JSON.stringify({wLog,sP,rLog,plans})); } catch(e) {}
+  } catch(err) {
+    console.error('Supabase load error:', err);
+    try {
+      const d = JSON.parse(localStorage.getItem('trainapp_cache') || localStorage.getItem('trainapp_v1') || '{}');
+      wLog  = d.wLog  || [];
+      sP    = d.sP    || {};
+      rLog  = d.rLog  || [];
+      plans = d.plans || JSON.parse(JSON.stringify(DEFAULT_PLANS));
+    } catch(e) { plans = JSON.parse(JSON.stringify(DEFAULT_PLANS)); }
+  }
+}
+
+async function sbSave() {
+  try {
+    try { localStorage.setItem('trainapp_cache', JSON.stringify({wLog,sP,rLog,plans})); } catch(e) {}
+    const spRows = await sbReq('GET', 'set_progress', null, 'user_id=eq.' + UID);
+    if (spRows && spRows.length > 0) {
+      await sbReq('PATCH', 'set_progress', {data: sP, updated_at: new Date().toISOString()}, 'user_id=eq.' + UID);
+    } else {
+      await sbReq('POST', 'set_progress', {user_id: UID, data: sP});
+    }
+    const rlRows = await sbReq('GET', 'run_logs', null, 'user_id=eq.' + UID);
+    if (rlRows && rlRows.length > 0) {
+      await sbReq('PATCH', 'run_logs', {data: rLog, updated_at: new Date().toISOString()}, 'user_id=eq.' + UID);
+    } else {
+      await sbReq('POST', 'run_logs', {user_id: UID, data: rLog});
+    }
+    const tpRows = await sbReq('GET', 'training_plans', null, 'user_id=eq.' + UID);
+    if (tpRows && tpRows.length > 0) {
+      await sbReq('PATCH', 'training_plans', {data: plans, updated_at: new Date().toISOString()}, 'user_id=eq.' + UID);
+    } else {
+      await sbReq('POST', 'training_plans', {user_id: UID, data: plans});
+    }
+  } catch(err) { console.error('Supabase save error:', err); }
+}
+
+async function sbSaveWorkout(entry) {
+  try {
+    await sbReq('POST', 'workout_logs', {
+      user_id: UID, plan: entry.plan, date: entry.date,
+      total_sets: entry.totalSets, duration_secs: entry.durationSecs,
+      exercises: entry.exercises, new_prs: entry.newPRs || []
+    });
+  } catch(err) { console.error('Supabase workout save error:', err); }
+}
+
+// Migrate old localStorage data to Supabase (runs once)
+async function migrateIfNeeded() {
+  try {
+    const migrated = localStorage.getItem('sb_migrated');
+    if (migrated) return;
+    const old = JSON.parse(localStorage.getItem('trainapp_v1') || '{}');
+    if (!old.wLog && !old.sP && !old.rLog) return;
+    // Check if Supabase already has data
+    const existing = await sbReq('GET', 'workout_logs', null, 'user_id=eq.' + UID + '&limit=1');
+    if (existing && existing.length > 0) { localStorage.setItem('sb_migrated','1'); return; }
+    // Migrate workouts
+    if (old.wLog && old.wLog.length > 0) {
+      for (const w of old.wLog) { await sbSaveWorkout(w); }
+    }
+    // Migrate sP, rLog, plans
+    if (old.sP) sP = old.sP;
+    if (old.rLog) rLog = old.rLog;
+    if (old.plans) plans = old.plans;
+    await sbSave();
+    wLog = old.wLog || [];
+    localStorage.setItem('sb_migrated','1');
+    console.log('Migration complete!');
+  } catch(e) { console.error('Migration error:', e); }
+}
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Crimson+Pro:ital,wght@0,400;1,300&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
@@ -177,30 +286,21 @@ function prefillMuscles(){
   save();
 }
 try{
-  const d=JSON.parse(localStorage.getItem("trainapp_v1")||"{}");
+  const d=JSON.parse(localStorage.getItem("trainapp_cache")||localStorage.getItem("trainapp_v1")||"{}");
   wLog=d.wLog||[];sP=d.sP||{};rLog=d.rLog||[];
   plans=d.plans?d.plans:JSON.parse(JSON.stringify(DEFAULT_PLANS));
 }catch{plans=JSON.parse(JSON.stringify(DEFAULT_PLANS));}
-// Restore active workout if page was reloaded mid-training
-try{
-  const wxd=JSON.parse(localStorage.getItem("trainapp_wx")||"null");
-  if(wxd&&wxd.phase==="active"&&wxd.planId&&wxd.exs&&wxd.ss){
-    wx={phase:"active",planId:wxd.planId,exs:wxd.exs,ss:wxd.ss,
-        etimer:{on:false,ei:0,total:0,left:0,iv:null},
-        newPRs:wxd.newPRs||[],startTime:wxd.startTime||Date.now(),clockIv:null};
-    tab="workout";
-  }
-}catch{}
-function save(){try{localStorage.setItem("trainapp_v1",JSON.stringify({wLog,sP,rLog,plans}));}catch{}}
+function save(){
+  try{localStorage.setItem("trainapp_cache",JSON.stringify({wLog,sP,rLog,plans}));}catch{}
+  sbSave();
+}
 function saveWx(){
   if(wx.phase==="active"){
     try{localStorage.setItem("trainapp_wx",JSON.stringify({
       phase:wx.phase,planId:wx.planId,exs:wx.exs,ss:wx.ss,
       startTime:wx.startTime,newPRs:wx.newPRs||[]
     }));}catch{}
-  } else {
-    try{localStorage.removeItem("trainapp_wx");}catch{}
-  }
+  }else{try{localStorage.removeItem("trainapp_wx");}catch{}}
 }
 function clearWx(){try{localStorage.removeItem("trainapp_wx");}catch{}}
 
@@ -273,10 +373,13 @@ function homeHTML(){
     const hasRowing=wLogWeek.some(w=>w.date===dateStr&&(w.plan==="ROWING"||w.plan==="RUDERN"));
     const hasRun=rLogWeek.some(r=>r.date===dateStr);
     const active=hasWorkout||hasRowing||hasRun;
-    // colors per type: workout=green, rowing=orange, run=blue
-    const types=[hasWorkout,hasRowing,hasRun].filter(Boolean).length;
-    const dot=types>1?"#a78bfa":hasWorkout?"#22c55e":hasRowing?"#ff5c1a":hasRun?"#3b82f6":null;
-    return {label,isToday,active,dot,dateStr,hasWorkout,hasRowing,hasRun};
+    const workoutEntry=wLogWeek.find(w=>w.date===dateStr&&w.plan!=="ROWING");
+    const workoutColor=workoutEntry ? (() => {
+      const planKey=Object.keys(plans).find(k=>plans[k].label===workoutEntry.plan);
+      return (planKey && plans[planKey] && plans[planKey].color) ? plans[planKey].color : "#22c55e";
+    })() : "#22c55e";
+    const dot=hasWorkout?workoutColor:hasRowing?"#ff5c1a":hasRun?"#3b82f6":null;
+    return {label,isToday,active,dot,dateStr,hasWorkout,hasRowing,hasRun,workoutColor};
   });
 
   // All-time totals
@@ -314,7 +417,7 @@ function homeHTML(){
             <div style="width:28px;height:28px;border-radius:50%;margin:0 auto;
               border:2px solid ${d.isToday?"#eceae4":"#252836"};
               display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
-              ${d.hasWorkout?`<div style="width:7px;height:7px;border-radius:50%;background:#22c55e"></div>`:""}
+              ${d.hasWorkout?`<div style="width:7px;height:7px;border-radius:50%;background:${d.workoutColor||"#22c55e"}"></div>`:""}
               ${d.hasRowing?`<div style="width:7px;height:7px;border-radius:50%;background:#ff5c1a"></div>`:""}
               ${d.hasRun?`<div style="width:7px;height:7px;border-radius:50%;background:#3b82f6"></div>`:""}
               ${!d.hasWorkout&&!d.hasRowing&&!d.hasRun&&d.isToday?`<div style="width:5px;height:5px;border-radius:50%;background:#3a3d50"></div>`:""}
@@ -448,7 +551,6 @@ function renderWorkout(){
   document.querySelectorAll(".s-inp").forEach(inp=>{
     inp.addEventListener("input",e=>{
       wx.ss[+e.target.dataset.ei][+e.target.dataset.si][e.target.dataset.f]=e.target.value;
-      saveWx();
     });
   });
   // long-press to delete set (600ms hold)
@@ -535,7 +637,6 @@ function wActiveHTML(){
 }
 
 function exCardHTML(ex,ei,ac){
-  // Separator – just a divider label, not a real exercise
   if(ex.type==="separator"){
     return `<div style="display:flex;align-items:center;gap:10px;margin:14px 0 6px">
       <div style="flex:1;height:1px;background:#2c2f3d"></div>
@@ -628,7 +729,6 @@ function timeRowHTML(ei,si,ex,s,ac){
 
 function togSet(ei,si){
   wx.ss[ei][si].done=!wx.ss[ei][si].done;
-  saveWx();
   renderWorkout();
 }
 
@@ -703,14 +803,16 @@ function finishW(){
     exercises[ex.name]=wx.ss[ei].filter(s=>s.done).map(s=>({reps:s.reps,kg:s.kg}));
   });
   const planLabel=(plans[wx.planId]||DEFAULT_PLANS[wx.planId]||{label:wx.planId?.toUpperCase()}).label;
-  wLog.push({plan:planLabel,date:new Date().toLocaleDateString("de-DE"),totalSets,exercises,durationSecs});
+  const _entry={plan:planLabel,date:new Date().toLocaleDateString("de-DE"),totalSets,exercises,durationSecs};
+  wLog.push(_entry);
+  sbSaveWorkout(_entry);
   wx.newPRs=checkNewPRs();
   save();wx.phase="done";renderWorkout();
 }
 
 function confirmFinishW(){
-  const total=wx.ss.reduce((a,s)=>a+s.length,0);
-  const done=wx.ss.reduce((a,s)=>a+s.filter(r=>r.done).length,0);
+  const total=wx.ss.reduce((a,s,i)=>wx.exs[i]?.type==="separator"?a:a+s.length,0);
+  const done=wx.ss.reduce((a,s,i)=>wx.exs[i]?.type==="separator"?a:a+s.filter(r=>r.done).length,0);
   const open=total-done;
   if(open===0){finishW();return;}
   showModal(
@@ -770,7 +872,7 @@ function wDoneHTML(){
           <span class="bc" style="font-size:13px;color:${ac}">${d}/${ex.sets} ✓</span>
         </div>`;}).join("")}
     </div>
-    <button class="btn" style="background:${ac};color:#fff" onclick="wx.phase='select';tab='workout';render()">NEUES WORKOUT</button>
+    <button class="btn" style="background:${ac};color:#fff" onclick="wx.phase='select';clearWx();tab='workout';render()">NEUES WORKOUT</button>
   </div>`;}
 
 /* ══ SKILLS ══ */
@@ -1341,7 +1443,7 @@ function getDynMuscleMap(){
   Object.values(plans).forEach(p=>{
     p.exercises.forEach(ex=>{
       if(ex.muscle&&ex.muscle.length>0&&!dyn[ex.name]){
-        const colorMap={"Brust":"#f472b6","Rücken":"#60a5fa","Arme":"#fb923c","Schultern":"#a78bfa","Core":"#34d399","Beine":"#facc15","Gesäß":"#fbbf24","Ausdauer":"#22c55e"};
+        const colorMap={"Rücken":"#60a5fa","Brust & Trizeps":"#f472b6","Core":"#34d399","Schultern":"#fb923c","Beine":"#facc15","Beine & Po":"#fbbf24","Ganzkörper":"#94a3b8","Ausdauer":"#22c55e","Unterarme":"#e2e8f0"};
         const grps=Array.isArray(ex.muscle)?ex.muscle:[ex.muscle];
         dyn[ex.name]={g:grps,c:colorMap[grps[0]]||"#94a3b8"};
       }
@@ -1462,7 +1564,7 @@ function historyHTML(){
     </div>
     <div style="background:#252836;border-radius:9px;padding:10px 12px;margin-bottom:8px">
       <div class="bc" style="font-size:10px;letter-spacing:1px;color:#4a4d5e;margin-bottom:3px">ℹ️ DATENSPEICHERUNG</div>
-      <div class="cp" style="font-size:12px;color:#7a7d8f;line-height:1.5">Daten werden lokal in deinem Browser gespeichert (localStorage). Sie bleiben erhalten bis du den Browser-Speicher manuell leerst. Regelmäßige Backups schützen deine Daten dauerhaft.</div>
+      <div class="cp" style="font-size:12px;color:#7a7d8f;line-height:1.5">Daten werden sicher in der Cloud gespeichert (Supabase). Sie bleiben auf allen Geräten erhalten – auch bei neuem Handy oder gelöschtem Browser-Cache. Backups bieten zusätzliche Sicherheit.</div>
     </div>
     <div style="height:16px"></div>
   </div>`;}
@@ -1579,43 +1681,32 @@ function musclesHTML(){
   const sorted=Object.entries(muscles).sort((a,b)=>b[1].sets-a[1].sets);
   // Spider chart
   const spiderGroups=["Brust","Rücken","Arme","Schultern","Core","Beine","Gesäß"];
-  const maxSets2=Math.max(1,...spiderGroups.map(g=>muscles[g]?.sets||0));
-  const cx=160,cy=130,r=100;
+  const maxSp=Math.max(1,...spiderGroups.map(g=>muscles[g]?.sets||0));
+  const cx=160,cy=130,r=95;
   const spiderPts=spiderGroups.map((g,i)=>{
     const angle=(i/spiderGroups.length)*Math.PI*2-Math.PI/2;
-    const val=(muscles[g]?.sets||0)/maxSets2;
-    return {
-      x:cx+Math.cos(angle)*r*val,
-      y:cy+Math.sin(angle)*r*val,
-      lx:cx+Math.cos(angle)*(r+22),
-      ly:cy+Math.sin(angle)*(r+22),
-      g,val,color:muscles[g]?.color||"#3a3d50"
-    };
+    const val=(muscles[g]?.sets||0)/maxSp;
+    return{x:cx+Math.cos(angle)*r*val,y:cy+Math.sin(angle)*r*val,
+      lx:cx+Math.cos(angle)*(r+24),ly:cy+Math.sin(angle)*(r+24),
+      g,val,color:muscles[g]?.color||"#3a3d50",sets:muscles[g]?.sets||0};
   });
   const spiderPath=spiderPts.map((p,i)=>i===0?`M${p.x},${p.y}`:`L${p.x},${p.y}`).join(" ")+"Z";
-  // Grid circles
-  const gridCircles=[0.33,0.66,1].map(f=>`<circle cx="${cx}" cy="${cy}" r="${r*f}" fill="none" stroke="#2c2f3d" stroke-width="1"/>`).join("");
-  // Axes
-  const axes=spiderGroups.map((_,i)=>{
-    const angle=(i/spiderGroups.length)*Math.PI*2-Math.PI/2;
-    return `<line x1="${cx}" y1="${cy}" x2="${cx+Math.cos(angle)*r}" y2="${cy+Math.sin(angle)*r}" stroke="#2c2f3d" stroke-width="1"/>`;
-  }).join("");
+  const gridC=[0.33,0.66,1].map(f=>`<circle cx="${cx}" cy="${cy}" r="${r*f}" fill="none" stroke="#2c2f3d" stroke-width="1"/>`).join("");
+  const axes=spiderGroups.map((_,i)=>{const a=(i/spiderGroups.length)*Math.PI*2-Math.PI/2;return`<line x1="${cx}" y1="${cy}" x2="${cx+Math.cos(a)*r}" y2="${cy+Math.sin(a)*r}" stroke="#2c2f3d" stroke-width="1"/>`;}).join("");
 
   return `<div class="screen" style="padding-top:16px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
       <button onclick="setStatsView('overview')" style="background:#252836;border:none;color:#6a6d80;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px">← ZURÜCK</button>
       <div class="bc" style="font-weight:900;font-size:20px;color:#a78bfa;letter-spacing:1px">💪 KÖRPERBEREICHE</div>
     </div>
-    ${sorted.length>0?`
-    <div class="card" style="margin-bottom:18px;padding:16px;text-align:center">
-      <div class="bc" style="font-size:10px;letter-spacing:2px;color:#4a4d5e;margin-bottom:12px">MUSKELVERTEILUNG</div>
+    ${sorted.length>0?`<div class="card" style="margin-bottom:18px;padding:16px;text-align:center">
+      <div class="bc" style="font-size:10px;letter-spacing:2px;color:#4a4d5e;margin-bottom:10px">MUSKELVERTEILUNG</div>
       <svg width="100%" viewBox="0 0 320 260" style="display:block">
-        ${gridCircles}${axes}
+        ${gridC}${axes}
         <path d="${spiderPath}" fill="#a78bfa" opacity=".15" stroke="#a78bfa" stroke-width="2"/>
         ${spiderPts.map(p=>`<circle cx="${p.x}" cy="${p.y}" r="4" fill="${p.color}"/>
-          <text x="${p.lx}" y="${p.ly+4}" text-anchor="middle" fill="${muscles[p.g]?p.color:"#3a3d50"}" font-size="11" font-family="'Barlow Condensed',sans-serif" font-weight="800">${p.g}</text>
-          ${muscles[p.g]?`<text x="${p.lx}" y="${p.ly+16}" text-anchor="middle" fill="#4a4d5e" font-size="9" font-family="'Barlow Condensed',sans-serif">${muscles[p.g].sets}S</text>`:""}
-        `).join("")}
+          <text x="${p.lx}" y="${p.ly+4}" text-anchor="middle" fill="${p.sets>0?p.color:"#3a3d50"}" font-size="11" font-family="'Barlow Condensed',sans-serif" font-weight="800">${p.g}</text>
+          ${p.sets>0?`<text x="${p.lx}" y="${p.ly+16}" text-anchor="middle" fill="#4a4d5e" font-size="9" font-family="'Barlow Condensed',sans-serif">${p.sets}S</text>`:""}`).join("")}
       </svg>
     </div>`:""}
     ${sorted.length===0
@@ -1984,7 +2075,7 @@ function edPlanHTML(){
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
       ${p.exercises.map((ex,i)=>`
         <div style="background:#1e2029;border:1px solid #2c2f3d;border-radius:11px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center">
-          <div onclick="ex.type!=='separator'&&(edState.view='exercise',edState.exIdx=${i},document.getElementById('app').innerHTML=editorHTML())" style="flex:1;cursor:${ex.type==='separator'?'default':'pointer'}">
+          <div onclick="pickEdEx(${i})" style="flex:1;cursor:${ex.type==='separator'?'default':'pointer'}">
             ${ex.type==='separator'
               ?`<div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:1px;background:#3a3d50"></div><div class="bc" style="font-size:11px;letter-spacing:2px;color:#7a7d8f">${ex.name||"TRENNER"}</div><div style="flex:1;height:1px;background:#3a3d50"></div></div>`
               :`<div class="bc" style="font-weight:700;font-size:15px;color:#eceae4">${ex.name}</div>
@@ -2108,28 +2199,25 @@ function removeEx(i){
     document.getElementById("app").innerHTML=editorHTML();
   });
 }
+function pickEdEx(i){
+  const ex=plans[edState.planId]?.exercises[i];
+  if(!ex||ex.type==="separator")return;
+  edState.view="exercise";edState.exIdx=i;
+  document.getElementById("app").innerHTML=editorHTML();
+}
+function addSeparator(){
+  const name=prompt("Name des Trenners:","WARM-UP");
+  if(name===null)return;
+  plans[edState.planId].exercises.push({name:name||"WARM-UP",type:"separator",sets:0});
+  save();sbSave();
+  document.getElementById("app").innerHTML=editorHTML();
+}
 function addEx(){
   plans[edState.planId].exercises.push({name:"Neue Übung",sets:3,reps:10,kg:null,type:"reps"});
   save();
   edState.exIdx=plans[edState.planId].exercises.length-1;
   edState.view="exercise";
   document.getElementById("app").innerHTML=editorHTML();
-}
-function addSeparator(){
-  showModal(
-    "Trenner hinzufügen",
-    "Wie soll der Trenner heißen?",
-    "HINZUFÜGEN",
-    "#22c55e",
-    ()=>{
-      const name=document.getElementById("separator-name-input")?.value||"WARM-UP";
-      plans[edState.planId].exercises.push({name,type:"separator",sets:0});
-      save();
-      document.getElementById("app").innerHTML=editorHTML();
-    },
-    `<input id="separator-name-input" value="WARM-UP" placeholder="z.B. WARM-UP, HAUPTTEIL, SUPERSATZ"
-      style="width:100%;background:#1e2029;border:1px solid #3a3d50;border-radius:8px;padding:10px;color:#eceae4;font-family:'Barlow Condensed',sans-serif;font-size:16px;margin-top:10px;outline:none"/>`
-  );
 }
 function addNewPlan(){
   const id="plan_"+Date.now();
@@ -2148,6 +2236,25 @@ function deletePlan(id){
 }
 
 render();
+
+// Load from Supabase and migrate old data
+migrateIfNeeded().then(() => {
+  try{
+    const wxd=JSON.parse(localStorage.getItem("trainapp_wx")||"null");
+    if(wxd&&wxd.phase==="active"&&wxd.planId&&wxd.exs&&wxd.ss){
+      wx={phase:"active",planId:wxd.planId,exs:wxd.exs,ss:wxd.ss,
+          etimer:{on:false,ei:0,total:0,left:0,iv:null},
+          newPRs:wxd.newPRs||[],startTime:wxd.startTime||Date.now(),clockIv:null};
+      tab="workout";
+    }
+  }catch{}
+  return sbLoad();
+}).then(() => {
+  render();
+}).catch(err => {
+  console.error('Init error:', err);
+  render();
+});
 </script>
 </body>
 </html>
