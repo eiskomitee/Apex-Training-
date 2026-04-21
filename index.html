@@ -1584,6 +1584,12 @@ function exerciseProgression(exName){
     const totalVol=sets.reduce((a,s)=>a+((parseFloat(s.reps)||0)*(parseFloat(s.kg)||1)),0);
     entries.push({date:w.date,maxReps,totalVol,sets,plan:w.plan});
   });
+  // Sort chronologically – oldest left, newest right
+  entries.sort((a,b)=>{
+    const pa=a.date.split(".").reverse().join("");
+    const pb=b.date.split(".").reverse().join("");
+    return pa.localeCompare(pb);
+  });
   return entries;
 }
 
@@ -1796,7 +1802,7 @@ function progressionHTML(){
 function progressionDetailHTML(ex){
   const data=exerciseProgression(ex);
   const maxR=data.length?Math.max(...data.map(d=>d.maxReps),1):1;
-  const W=320,H=130,pad=32;
+  const W=340,H=180,pad=40;
   const pts=data.map((d,i)=>{
     const x=pad+(i/(Math.max(data.length-1,1)))*(W-pad*2);
     const y=H-pad-(d.maxReps/maxR)*(H-pad*2);
@@ -1810,19 +1816,28 @@ function progressionDetailHTML(ex){
     </div>
     <div class="bc" style="font-weight:900;font-size:26px;color:#22c55e;letter-spacing:.5px;margin-bottom:16px">${ex}</div>
     ${data.length>=2?`
-    <div class="card" style="margin-bottom:14px;padding:14px">
-      <div class="bc" style="font-size:10px;letter-spacing:2px;color:#4a4d5e;margin-bottom:10px">MAX WDHL PRO TRAINING</div>
+    <div class="card" style="margin-bottom:16px;padding:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div class="bc" style="font-size:11px;letter-spacing:2px;color:#4a4d5e">MAX WDHL PRO TRAINING</div>
+        <div class="bc" style="font-size:13px;color:#a78bfa;font-weight:800">${data[data.length-1].maxReps > data[0].maxReps ? "↑ +" + (data[data.length-1].maxReps - data[0].maxReps) + " Wdhl" : data[data.length-1].maxReps < data[0].maxReps ? "↓ " + (data[data.length-1].maxReps - data[0].maxReps) + " Wdhl" : "→ Gleich"}</div>
+      </div>
       <svg width="100%" viewBox="0 0 ${W} ${H}" style="display:block">
         ${[0.25,0.5,0.75,1].map(f=>{
           const y=H-pad-(f*(H-pad*2));
+          const val=Math.round(maxR*f);
           return `<line x1="${pad}" y1="${y}" x2="${W-pad}" y2="${y}" stroke="#252836" stroke-width="1"/>
-                  <text x="${pad-4}" y="${y+4}" text-anchor="end" fill="#4a4d5e" font-size="9" font-family="'Barlow Condensed',sans-serif">${Math.round(maxR*f)}</text>`;
+                  <text x="${pad-6}" y="${y+5}" text-anchor="end" fill="#6a6d80" font-size="13" font-weight="700" font-family="'Barlow Condensed',sans-serif">${val}</text>`;
         }).join("")}
-        <path d="${area}" fill="#22c55e" opacity=".1"/>
-        <path d="${path}" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        ${pts.map(p=>`<circle cx="${p.x}" cy="${p.y}" r="4.5" fill="#22c55e"/>`).join("")}
-        ${pts.filter((_,i)=>i===0||i===pts.length-1||pts.length<=5).map(p=>`
-          <text x="${p.x}" y="${H-3}" text-anchor="middle" fill="#4a4d5e" font-size="8" font-family="'Barlow Condensed',sans-serif">${p.d.date.slice(0,5)}</text>`).join("")}
+        <path d="${area}" fill="#a78bfa" opacity=".12"/>
+        <path d="${path}" fill="none" stroke="#a78bfa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        ${pts.map(p=>{
+          const isBest=p.d.maxReps===maxR;
+          return `<circle cx="${p.x}" cy="${p.y}" r="${isBest?7:5}" fill="${isBest?"#22c55e":"#a78bfa"}"/>
+                  <circle cx="${p.x}" cy="${p.y}" r="${isBest?4:3}" fill="#1e2029"/>
+                  <text x="${p.x}" y="${p.y-11}" text-anchor="middle" fill="${isBest?"#22c55e":"#a78bfa"}" font-size="13" font-weight="900" font-family="'Barlow Condensed',sans-serif">${p.d.maxReps}</text>`;
+        }).join("")}
+        ${pts.filter((_,i)=>i===0||i===pts.length-1||pts.length<=6).map(p=>`
+          <text x="${p.x}" y="${H-4}" text-anchor="middle" fill="#6a6d80" font-size="11" font-weight="700" font-family="'Barlow Condensed',sans-serif">${p.d.date.slice(0,5)}</text>`).join("")}
       </svg>
     </div>`
     :data.length===1?`<div class="card" style="padding:18px;text-align:center;margin-bottom:14px"><div class="cp" style="color:#4a4d5e">Mind. 2 Einheiten für einen Graphen</div></div>`
