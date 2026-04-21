@@ -485,8 +485,18 @@ function homeHTML(){
         </div>
       </div>`;}).join("")}
     ${last?`<div class="lbl" style="margin-top:6px">LETZTES WORKOUT</div>
-      <div class="card"><div class="bc" style="font-weight:700;font-size:16px;color:#ff5c1a">${last.plan}</div>
-      <div class="cp" style="font-size:12px;color:#7a7d8f;margin-top:2px">${last.date} · ${last.totalSets} Sätze</div></div>`:""}
+      <div class="card" style="border-color:${(plans[last.plan?.toLowerCase()]||{color:"#22c55e"}).color}33;cursor:pointer" onclick="go('history')">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="bc" style="font-weight:800;font-size:18px;color:${(plans[last.plan?.toLowerCase()]||{color:"#22c55e"}).color}">${last.plan}</div>
+            <div class="cp" style="font-size:12px;color:#7a7d8f;margin-top:2px">${last.date}${last.durationSecs?" · "+fmtDur(last.durationSecs):""}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="bc" style="font-size:24px;font-weight:900;color:#eceae4">${last.totalSets}</div>
+            <div class="bc" style="font-size:9px;letter-spacing:1px;color:#4a4d5e">SÄTZE</div>
+          </div>
+        </div>
+      </div>`:""}
   </div>`;
 }
 
@@ -1514,10 +1524,35 @@ function historyHTML(){
   const maxSets=Math.max(1,...Object.values(muscles).map(m=>m.sets));
   return `<div class="screen">
     <div class="h1">STATISTIKEN</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 22px">
-      ${[[wLog.length,"WORKOUTS"],[wLog.reduce((a,w)=>a+(w.totalSets||0),0),"SÄTZE GESAMT"],[rLog.length,"LÄUFE"],[km.toFixed(0)+" km","KM GESAMT"]].map(([v,l])=>`
+    ${(()=>{
+      const now=new Date();
+      const dow=(now.getDay()+6)%7;
+      const thisWeekStart=new Date(now);thisWeekStart.setDate(now.getDate()-dow);thisWeekStart.setHours(0,0,0,0);
+      const lastWeekStart=new Date(thisWeekStart);lastWeekStart.setDate(thisWeekStart.getDate()-7);
+      const inWeek=(d,start)=>{const e=new Date(start);e.setDate(start.getDate()+7);const dp=d.date?.split(".");const dt=dp&&dp.length>=3?new Date(+dp[2],+dp[1]-1,+dp[0]):null;return dt&&dt>=start&&dt<e;};
+      const thisW=wLog.filter(w=>inWeek(w,thisWeekStart));
+      const lastW=wLog.filter(w=>inWeek(w,lastWeekStart));
+      const thisSets=thisW.reduce((a,w)=>a+(w.totalSets||0),0);
+      const lastSets=lastW.reduce((a,w)=>a+(w.totalSets||0),0);
+      const diff=thisSets-lastSets;
+      const diffStr=diff>0?`<span style="color:#22c55e">↑ +${diff}</span>`:diff<0?`<span style="color:#ef4444">↓ ${diff}</span>`:`<span style="color:#4a4d5e">→ Gleich</span>`;
+      return `<div style="background:#1e2029;border:1px solid #2c2f3d;border-radius:11px;padding:14px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="bc" style="font-size:9px;letter-spacing:1.5px;color:#4a4d5e;margin-bottom:4px">DIESE WOCHE VS LETZTE WOCHE</div>
+            <div class="bc" style="font-size:26px;font-weight:900;color:#22c55e">${thisSets} <span style="font-size:14px;color:#4a4d5e">Sätze</span></div>
+          </div>
+          <div style="text-align:right">
+            <div class="bc" style="font-size:18px;font-weight:800">${diffStr}</div>
+            <div class="bc" style="font-size:11px;color:#4a4d5e;margin-top:2px">vs ${lastSets} letzte Woche</div>
+          </div>
+        </div>
+      </div>`;
+    })()}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 22px">
+      ${[[wLog.length,"WORKOUTS GESAMT"],[wLog.reduce((a,w)=>a+(w.totalSets||0),0),"SÄTZE GESAMT"],[rLog.length,"LÄUFE"],[km.toFixed(0)+" km","KM GESAMT"]].map(([v,l])=>`
         <div style="background:#1e2029;border:1px solid #2c2f3d;border-radius:10px;padding:14px;text-align:center">
-          <div class="bc" style="font-weight:900;font-size:28px;color:#22c55e">${v}</div>
+          <div class="bc" style="font-weight:900;font-size:26px;color:#22c55e">${v}</div>
           <div class="bc" style="font-size:8px;letter-spacing:1.5px;color:#4a4d5e;margin-top:2px">${l}</div>
         </div>`).join("")}
     </div>
@@ -1550,11 +1585,34 @@ function historyHTML(){
 
     <div class="lbl">LETZTE WORKOUTS</div>
     ${wLog.length===0?`<div class="cp" style="color:#4a4d5e;padding:12px 0">Noch kein Workout aufgezeichnet</div>`
-      :[...wLog].reverse().slice(0,10).map(w=>`<div class="card" style="margin-bottom:7px;display:flex;justify-content:space-between;align-items:center">
-        <div><div class="bc" style="font-weight:700;font-size:14px;color:#22c55e">${w.plan}</div>
-        <div class="cp" style="font-size:11px;color:#7a7d8f">${w.date}${w.durationSecs?" · "+fmtDur(w.durationSecs):""}</div></div>
-        <div class="bc" style="font-size:12px;color:#c0bdb5">${w.totalSets} Sätze</div>
-      </div>`).join("")}
+      :(() => {
+        const sorted=[...wLog].reverse();
+        // Group by month
+        const months={};
+        sorted.forEach(w=>{
+          const parts=w.date.split(".");
+          const key=parts.length>=3?parts[1]+"."+parts[2]:w.date.slice(0,7);
+          const monthNames=["","Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
+          const mNum=parseInt(parts[1])||0;
+          const label=(monthNames[mNum]||parts[1])+" "+parts[2];
+          if(!months[key])months[key]={label,items:[]};
+          months[key].items.push(w);
+        });
+        return Object.entries(months).map(([,{label,items}])=>`
+          <div class="bc" style="font-size:10px;letter-spacing:2px;color:#4a4d5e;margin:12px 0 6px">${label}</div>
+          ${items.map(w=>{
+            const planColor=(plans[w.plan?.toLowerCase()]||{color:"#22c55e"}).color;
+            return `<div class="card" style="margin-bottom:7px;display:flex;justify-content:space-between;align-items:center;border-color:${planColor}22">
+              <div>
+                <div class="bc" style="font-weight:700;font-size:15px;color:${planColor}">${w.plan}</div>
+                <div class="cp" style="font-size:11px;color:#7a7d8f">${w.date}${w.durationSecs?" · "+fmtDur(w.durationSecs):""}</div>
+              </div>
+              <div style="text-align:right">
+                <div class="bc" style="font-size:20px;font-weight:900;color:#eceae4">${w.totalSets}</div>
+                <div class="bc" style="font-size:9px;letter-spacing:1px;color:#4a4d5e">SÄTZE</div>
+              </div>
+            </div>`;}).join("")}`).join("");
+      })()}
 
     <!-- Data Safety -->
     <div class="lbl" style="margin-top:10px">DATENSICHERUNG</div>
@@ -1612,13 +1670,18 @@ function calcPRs(){
     if(!w.exercises)return;
     Object.entries(w.exercises).forEach(([name,sets])=>{
       if(!sets.length)return;
-      if(!prs[name])prs[name]={maxReps:0,maxRepsDate:"",maxKg:0,maxKgDate:""};
+      if(!prs[name])prs[name]={maxReps:0,maxRepsDate:"",maxKg:0,maxKgDate:"",maxVol:0,maxVolDate:""};
       sets.forEach(s=>{
         const r=parseFloat(s.reps)||0;
         const k=parseFloat(s.kg)||0;
         if(r>prs[name].maxReps){prs[name].maxReps=r;prs[name].maxRepsDate=w.date;}
         if(k>prs[name].maxKg){prs[name].maxKg=k;prs[name].maxKgDate=w.date;}
       });
+      const hasKg=sets.some(s=>parseFloat(s.kg)>0);
+      const vol=hasKg
+        ? sets.reduce((a,s)=>a+(parseFloat(s.reps)||0)*(parseFloat(s.kg)||0),0)
+        : sets.reduce((a,s)=>a+(parseFloat(s.reps)||0),0);
+      if(vol>prs[name].maxVol){prs[name].maxVol=vol;prs[name].maxVolDate=w.date;}
     });
   });
   return prs;
@@ -1914,6 +1977,11 @@ function prsHTML(){
               <div class="bc" style="font-weight:900;font-size:28px;color:#f59e0b">${pr.maxKg}</div>
               <div class="bc" style="font-size:9px;letter-spacing:1px;color:#4a4d5e;margin-top:2px">MAX KG</div>
               <div class="cp" style="font-size:10px;color:#4a4d5e;margin-top:3px">${pr.maxKgDate}</div>
+            </div>`:""}
+            ${pr.maxVol>0?`<div style="background:#252836;border-radius:9px;padding:10px;text-align:center;grid-column:${pr.maxReps>0&&pr.maxKg>0?"1/-1":"auto"}">
+              <div class="bc" style="font-weight:900;font-size:28px;color:#a78bfa">${Math.round(pr.maxVol)}</div>
+              <div class="bc" style="font-size:9px;letter-spacing:1px;color:#4a4d5e;margin-top:2px">MAX VOLUMEN</div>
+              <div class="cp" style="font-size:10px;color:#4a4d5e;margin-top:3px">${pr.maxVolDate}</div>
             </div>`:""}
           </div>
         </div>`).join("")}
