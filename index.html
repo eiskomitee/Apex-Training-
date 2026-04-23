@@ -1520,16 +1520,29 @@ function getDynMuscleMap(){
 function muscleStats(){
   const counts={};
   const dynMap=getDynMuscleMap();
+  // Migration: old combined groups → new clean groups
+  const MIGRATE={
+    "Brust & Trizeps":["Brust","Arme"],
+    "Beine & Po":["Beine","Gesäß"],
+    "Rücken & Beine":["Rücken","Beine"],
+    "Core & Schultern":["Core","Schultern"],
+    "Ganzkörper":["Brust","Rücken","Arme","Beine","Core"],
+    "Unterarme":["Arme"]
+  };
+  const COLOR={"Brust":"#f472b6","Rücken":"#60a5fa","Arme":"#fb923c","Schultern":"#a78bfa","Core":"#34d399","Beine":"#facc15","Gesäß":"#fbbf24","Ausdauer":"#22c55e"};
+  const remap=(g)=>MIGRATE[g]||[g];
   // Process in chronological order so lastDate/lastSets = most recent
   wLog.forEach(w=>{
     if(!w.exercises)return;
     Object.entries(w.exercises).forEach(([name,sets])=>{
       const m=dynMap[name];
       if(!m)return;
-      // Support both single group (string) and multiple groups (array)
-      const groups=Array.isArray(m.g)?m.g:[m.g];
+      const rawGroups=Array.isArray(m.g)?m.g:[m.g];
+      // Expand old combined groups to new clean groups
+      const groups=[...new Set(rawGroups.flatMap(remap))];
       groups.forEach(grp=>{
-        if(!counts[grp])counts[grp]={sets:0,color:m.c||'#94a3b8',exercises:{},lastDate:null,lastSets:0};
+        const color=COLOR[grp]||m.c||'#94a3b8';
+        if(!counts[grp])counts[grp]={sets:0,color,exercises:{},lastDate:null,lastSets:0};
         counts[grp].sets+=sets.length;
         if(!counts[grp].exercises[name])counts[grp].exercises[name]=0;
         counts[grp].exercises[name]+=sets.length;
@@ -1544,10 +1557,14 @@ function muscleStats(){
   [...wLog].reverse().forEach(w=>{
     if(!w.exercises)return;
     Object.entries(w.exercises).forEach(([name,sets])=>{
-      const m=MUSCLE_MAP[name];
+      const m=dynMap[name];
       if(!m)return;
-      if(!lastByGroup[m.g])lastByGroup[m.g]={date:w.date,sets:0};
-      if(lastByGroup[m.g].date===w.date) lastByGroup[m.g].sets+=sets.length;
+      const raw=Array.isArray(m.g)?m.g:[m.g];
+      const groups=[...new Set(raw.flatMap(remap))];
+      groups.forEach(grp=>{
+        if(!lastByGroup[grp])lastByGroup[grp]={date:w.date,sets:0};
+        if(lastByGroup[grp].date===w.date) lastByGroup[grp].sets+=sets.length;
+      });
     });
   });
   Object.entries(lastByGroup).forEach(([g,v])=>{
