@@ -669,12 +669,19 @@ function workoutHistHTML(){
                 </div>
                 ${sets.map((s,i)=>{
                   const pS=prevSets&&prevSets[i]?prevSets[i]:null;
-                  const prevStr=pS?`<span class="bc" style="font-size:10px;color:#4a4d5e;margin-left:8px">(war: ${pS.reps||"—"}${pS.kg?"·"+pS.kg+"kg":""})</span>`:"";
+                  const isTime=s.secs!=null&&s.secs!==""&&(!s.reps||s.reps===""||s.reps==="0");
+                  let prevStr="";
+                  if(pS){
+                    const pIsTime=pS.secs!=null&&pS.secs!==""&&(!pS.reps||pS.reps===""||pS.reps==="0");
+                    prevStr=pIsTime
+                      ? `<span class="bc" style="font-size:10px;color:#4a4d5e;margin-left:8px">(war: ${pS.secs}s)</span>`
+                      : `<span class="bc" style="font-size:10px;color:#4a4d5e;margin-left:8px">(war: ${pS.reps||"—"}${pS.kg?"·"+pS.kg+"kg":""})</span>`;
+                  }
                   return `<div style="display:flex;align-items:center;gap:10px;padding:2px 0">
                     <span class="bc" style="font-size:11px;color:#4a4d5e;width:22px">S${i+1}</span>
-                    <span class="bc" style="font-size:14px;font-weight:700;color:#eceae4">${s.reps||"—"}</span>
-                    <span class="bc" style="font-size:10px;color:#7a7d8f">Wdhl</span>
-                    ${s.kg?`<span class="bc" style="font-size:14px;font-weight:700;color:#eceae4">${s.kg}</span><span class="bc" style="font-size:10px;color:#7a7d8f">kg</span>`:""}
+                    ${isTime
+                      ?`<span class="bc" style="font-size:14px;font-weight:700;color:#eceae4">${s.secs}</span><span class="bc" style="font-size:10px;color:#7a7d8f">Sek</span>`
+                      :`<span class="bc" style="font-size:14px;font-weight:700;color:#eceae4">${s.reps||"—"}</span><span class="bc" style="font-size:10px;color:#7a7d8f">Wdhl</span>${s.kg?`<span class="bc" style="font-size:14px;font-weight:700;color:#eceae4">${s.kg}</span><span class="bc" style="font-size:10px;color:#7a7d8f">kg</span>`:""}`}
                     ${prevStr}
                   </div>`;}).join("")}
               </div>`;}).join("")}
@@ -910,7 +917,11 @@ function finishW(){
   const exercises={};
   wx.exs.forEach((ex,ei)=>{
     if(ex.type==="separator")return;
-    exercises[ex.name]=wx.ss[ei].filter(s=>s.done).map(s=>({reps:s.reps,kg:s.kg}));
+    exercises[ex.name]=wx.ss[ei].filter(s=>s.done).map(s=>{
+      const entry={reps:s.reps,kg:s.kg};
+      if(s.secs!=null&&s.secs!=="")entry.secs=s.secs;
+      return entry;
+    });
   });
   const planLabel=(plans[wx.planId]||DEFAULT_PLANS[wx.planId]||{label:wx.planId?.toUpperCase()}).label;
   const _entry={plan:planLabel,date:new Date().toLocaleDateString("de-DE"),totalSets,exercises,durationSecs};
@@ -1768,12 +1779,17 @@ function exerciseProgression(exName){
   wLog.forEach(w=>{
     if(!w.exercises||!w.exercises[exName]||!w.exercises[exName].length)return;
     const sets=w.exercises[exName];
-    const maxReps=Math.max(...sets.map(s=>parseFloat(s.reps)||0));
+    const isTimeEx=sets.every(s=>s.secs!=null&&s.secs!=="");
+    const maxReps=isTimeEx
+      ? Math.max(...sets.map(s=>parseFloat(s.secs)||0))
+      : Math.max(...sets.map(s=>parseFloat(s.reps)||0));
     const hasKg=sets.some(s=>parseFloat(s.kg)>0);
-    const totalVol=hasKg
-      ? sets.reduce((a,s)=>a+((parseFloat(s.reps)||0)*(parseFloat(s.kg)||0)),0)
-      : sets.reduce((a,s)=>a+(parseFloat(s.reps)||0),0);
-    entries.push({date:w.date,maxReps,totalVol,sets,plan:w.plan});
+    const totalVol=isTimeEx
+      ? sets.reduce((a,s)=>a+(parseFloat(s.secs)||0),0)
+      : hasKg
+        ? sets.reduce((a,s)=>a+((parseFloat(s.reps)||0)*(parseFloat(s.kg)||0)),0)
+        : sets.reduce((a,s)=>a+(parseFloat(s.reps)||0),0);
+    entries.push({date:w.date,maxReps,totalVol,sets,plan:w.plan,isTime:isTimeEx});
   });
   // Sort chronologically – oldest left, newest right
   entries.sort((a,b)=>{
@@ -1790,17 +1806,23 @@ function calcPRs(){
     if(!w.exercises)return;
     Object.entries(w.exercises).forEach(([name,sets])=>{
       if(!sets.length)return;
-      if(!prs[name])prs[name]={maxReps:0,maxRepsDate:"",maxKg:0,maxKgDate:"",maxVol:0,maxVolDate:""};
+      if(!prs[name])prs[name]={maxReps:0,maxRepsDate:"",maxKg:0,maxKgDate:"",maxVol:0,maxVolDate:"",maxSecs:0,maxSecsDate:"",isTime:false};
+      const isTimeEx=sets.every(s=>s.secs!=null&&s.secs!=="");
+      if(isTimeEx)prs[name].isTime=true;
       sets.forEach(s=>{
         const r=parseFloat(s.reps)||0;
         const k=parseFloat(s.kg)||0;
+        const sec=parseFloat(s.secs)||0;
         if(r>prs[name].maxReps){prs[name].maxReps=r;prs[name].maxRepsDate=w.date;}
         if(k>prs[name].maxKg){prs[name].maxKg=k;prs[name].maxKgDate=w.date;}
+        if(sec>prs[name].maxSecs){prs[name].maxSecs=sec;prs[name].maxSecsDate=w.date;}
       });
       const hasKg=sets.some(s=>parseFloat(s.kg)>0);
-      const vol=hasKg
-        ? sets.reduce((a,s)=>a+(parseFloat(s.reps)||0)*(parseFloat(s.kg)||0),0)
-        : sets.reduce((a,s)=>a+(parseFloat(s.reps)||0),0);
+      const vol=isTimeEx
+        ? sets.reduce((a,s)=>a+(parseFloat(s.secs)||0),0)
+        : hasKg
+          ? sets.reduce((a,s)=>a+(parseFloat(s.reps)||0)*(parseFloat(s.kg)||0),0)
+          : sets.reduce((a,s)=>a+(parseFloat(s.reps)||0),0);
       if(vol>prs[name].maxVol){prs[name].maxVol=vol;prs[name].maxVolDate=w.date;}
     });
   });
@@ -1997,7 +2019,7 @@ function progressionHTML(){
 
 function progressionDetailHTML(ex){
   const data=exerciseProgression(ex);
-  const isTime=data.length>0&&data[0].sets.some(s=>!s.reps&&s.secs);
+  const isTime=data.length>0&&data[0].isTime;
   // Toggle between volume and maxReps via global state
   if(typeof progView==="undefined") window.progView="vol";
   const useVol=window.progView==="vol"&&!isTime;
@@ -2015,7 +2037,7 @@ function progressionDetailHTML(ex){
   const trend=pts.length>=2?(pts[pts.length-1].v>pts[0].v?"↑":"↓"):"→";
   const trendCol=pts.length>=2?(pts[pts.length-1].v>pts[0].v?"#22c55e":pts[pts.length-1].v<pts[0].v?"#ef4444":"#a78bfa"):"#a78bfa";
   const trendVal=pts.length>=2?Math.abs(pts[pts.length-1].v-pts[0].v):0;
-  const unit=useVol?"kg·Wdhl":"Wdhl";
+  const unit=isTime?"Sek":useVol?"kg·Wdhl":"Wdhl";
   return `<div class="screen" style="padding-top:16px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
       <button onclick="selectedEx=null;setStatsView('progression')" style="background:#252836;border:none;color:#6a6d80;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px">← ALLE</button>
@@ -2032,7 +2054,7 @@ function progressionDetailHTML(ex){
     ${data.length>=2?`
     <div class="card" style="margin-bottom:16px;padding:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div class="bc" style="font-size:11px;letter-spacing:2px;color:#4a4d5e">${useVol?"VOLUMEN (Wdhl × kg)":"MAX WDHL PRO TRAINING"}</div>
+        <div class="bc" style="font-size:11px;letter-spacing:2px;color:#4a4d5e">${isTime?"MAX HALTEZEIT (Sek)":useVol?"VOLUMEN (Wdhl × kg)":"MAX WDHL PRO TRAINING"}</div>
         <div class="bc" style="font-size:13px;color:${trendCol};font-weight:800">${trend} ${trendVal>0?Math.round(trendVal)+" "+unit:"Gleich"}</div>
       </div>
       <svg width="100%" viewBox="0 0 ${W} ${H}" style="display:block">
@@ -2088,17 +2110,22 @@ function prsHTML(){
         <div class="card" style="margin-bottom:10px;border-color:#f59e0b22">
           <div class="bc" style="font-weight:800;font-size:16px;color:#eceae4;margin-bottom:10px">${name}</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            ${pr.maxReps>0?`<div style="background:#252836;border-radius:9px;padding:10px;text-align:center">
+            ${pr.isTime&&pr.maxSecs>0?`<div style="background:#252836;border-radius:9px;padding:10px;text-align:center;grid-column:1/-1">
+              <div class="bc" style="font-weight:900;font-size:28px;color:#f59e0b">${pr.maxSecs}<span style="font-size:16px;color:#4a4d5e"> Sek</span></div>
+              <div class="bc" style="font-size:9px;letter-spacing:1px;color:#4a4d5e;margin-top:2px">MAX HALTEZEIT</div>
+              <div class="cp" style="font-size:10px;color:#4a4d5e;margin-top:3px">${pr.maxSecsDate}</div>
+            </div>`:""}
+            ${!pr.isTime&&pr.maxReps>0?`<div style="background:#252836;border-radius:9px;padding:10px;text-align:center">
               <div class="bc" style="font-weight:900;font-size:28px;color:#f59e0b">${pr.maxReps}</div>
               <div class="bc" style="font-size:9px;letter-spacing:1px;color:#4a4d5e;margin-top:2px">MAX WDHL</div>
               <div class="cp" style="font-size:10px;color:#4a4d5e;margin-top:3px">${pr.maxRepsDate}</div>
             </div>`:""}
-            ${pr.maxKg>0?`<div style="background:#252836;border-radius:9px;padding:10px;text-align:center">
+            ${!pr.isTime&&pr.maxKg>0?`<div style="background:#252836;border-radius:9px;padding:10px;text-align:center">
               <div class="bc" style="font-weight:900;font-size:28px;color:#f59e0b">${pr.maxKg}</div>
               <div class="bc" style="font-size:9px;letter-spacing:1px;color:#4a4d5e;margin-top:2px">MAX KG</div>
               <div class="cp" style="font-size:10px;color:#4a4d5e;margin-top:3px">${pr.maxKgDate}</div>
             </div>`:""}
-            ${pr.maxVol>0?`<div style="background:#252836;border-radius:9px;padding:10px;text-align:center;grid-column:${pr.maxReps>0&&pr.maxKg>0?"1/-1":"auto"}">
+            ${!pr.isTime&&pr.maxVol>0?`<div style="background:#252836;border-radius:9px;padding:10px;text-align:center;grid-column:${pr.maxReps>0&&pr.maxKg>0?"1/-1":"auto"}">
               <div class="bc" style="font-weight:900;font-size:28px;color:#a78bfa">${Math.round(pr.maxVol)}</div>
               <div class="bc" style="font-size:9px;letter-spacing:1px;color:#4a4d5e;margin-top:2px">MAX VOLUMEN</div>
               <div class="cp" style="font-size:10px;color:#4a4d5e;margin-top:3px">${pr.maxVolDate}</div>
