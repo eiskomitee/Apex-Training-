@@ -774,6 +774,9 @@ function exCardHTML(ex,ei,ac){
         <div style="width:32px"></div>
       </div>`:""}
       ${sets.map((s,si)=>isTime?timeRowHTML(ei,si,ex,s,ac):repsRowHTML(ei,si,s,ac)).join("")}
+      <button onclick="addSet(${ei})" style="width:100%;background:transparent;border:1px dashed #3a3d50;border-radius:9px;padding:10px;margin-top:6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px;color:#6a6d80;letter-spacing:1.5px">
+        + SATZ
+      </button>
     </div>
   </div>`;
 }
@@ -931,6 +934,19 @@ function confirmFinishW(){
   );
 }
 
+function addSet(ei){
+  const ex=wx.exs[ei];
+  const lastSet=wx.ss[ei][wx.ss[ei].length-1];
+  // Use last set's values as template for the new set
+  wx.ss[ei].push({
+    reps:lastSet?lastSet.reps:(ex.reps!=null?String(ex.reps):""),
+    kg:lastSet?lastSet.kg:(ex.kg!=null?String(ex.kg):""),
+    secs:lastSet?lastSet.secs:(ex.secs!=null?String(ex.secs):null),
+    done:false
+  });
+  saveWx();
+  renderWorkout();
+}
 function deleteSet(ei,si){
   showModal(
     "Satz löschen?",
