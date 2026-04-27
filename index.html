@@ -669,18 +669,17 @@ function workoutHistHTML(){
                 </div>
                 ${sets.map((s,i)=>{
                   const pS=prevSets&&prevSets[i]?prevSets[i]:null;
-                  const isTime=s.secs!=null&&s.secs!==""&&(!s.reps||s.reps===""||s.reps==="0");
+                  const isTime=isTimeExercise(name,sets);
                   let prevStr="";
                   if(pS){
-                    const pIsTime=pS.secs!=null&&pS.secs!==""&&(!pS.reps||pS.reps===""||pS.reps==="0");
-                    prevStr=pIsTime
-                      ? `<span class="bc" style="font-size:10px;color:#4a4d5e;margin-left:8px">(war: ${pS.secs}s)</span>`
+                    prevStr=isTime
+                      ? `<span class="bc" style="font-size:10px;color:#4a4d5e;margin-left:8px">(war: ${pS.secs||"—"}s)</span>`
                       : `<span class="bc" style="font-size:10px;color:#4a4d5e;margin-left:8px">(war: ${pS.reps||"—"}${pS.kg?"·"+pS.kg+"kg":""})</span>`;
                   }
                   return `<div style="display:flex;align-items:center;gap:10px;padding:2px 0">
                     <span class="bc" style="font-size:11px;color:#4a4d5e;width:22px">S${i+1}</span>
                     ${isTime
-                      ?`<span class="bc" style="font-size:14px;font-weight:700;color:#eceae4">${s.secs}</span><span class="bc" style="font-size:10px;color:#7a7d8f">Sek</span>`
+                      ?`<span class="bc" style="font-size:14px;font-weight:700;color:#eceae4">${s.secs||"—"}</span><span class="bc" style="font-size:10px;color:#7a7d8f">Sek</span>`
                       :`<span class="bc" style="font-size:14px;font-weight:700;color:#eceae4">${s.reps||"—"}</span><span class="bc" style="font-size:10px;color:#7a7d8f">Wdhl</span>${s.kg?`<span class="bc" style="font-size:14px;font-weight:700;color:#eceae4">${s.kg}</span><span class="bc" style="font-size:10px;color:#7a7d8f">kg</span>`:""}`}
                     ${prevStr}
                   </div>`;}).join("")}
@@ -1774,12 +1773,29 @@ function allExerciseNames(){
   return [...names].sort();
 }
 
+// Check if exercise is a time exercise (look in current plans + check sets)
+function isTimeExercise(exName,sets){
+  // Check current plans
+  for(const planId in plans){
+    const ex=plans[planId].exercises?.find(e=>e.name===exName);
+    if(ex&&ex.type==="time")return true;
+  }
+  // Check default plans as fallback
+  for(const planId in DEFAULT_PLANS){
+    const ex=DEFAULT_PLANS[planId].exercises?.find(e=>e.name===exName);
+    if(ex&&ex.type==="time")return true;
+  }
+  // Check sets: if any set has secs but no reps, it's a time exercise
+  if(sets&&sets.some(s=>s.secs!=null&&s.secs!==""))return true;
+  return false;
+}
+
 function exerciseProgression(exName){
   const entries=[];
   wLog.forEach(w=>{
     if(!w.exercises||!w.exercises[exName]||!w.exercises[exName].length)return;
     const sets=w.exercises[exName];
-    const isTimeEx=sets.every(s=>s.secs!=null&&s.secs!=="");
+    const isTimeEx=isTimeExercise(exName,sets);
     const maxReps=isTimeEx
       ? Math.max(...sets.map(s=>parseFloat(s.secs)||0))
       : Math.max(...sets.map(s=>parseFloat(s.reps)||0));
@@ -1807,7 +1823,7 @@ function calcPRs(){
     Object.entries(w.exercises).forEach(([name,sets])=>{
       if(!sets.length)return;
       if(!prs[name])prs[name]={maxReps:0,maxRepsDate:"",maxKg:0,maxKgDate:"",maxVol:0,maxVolDate:"",maxSecs:0,maxSecsDate:"",isTime:false};
-      const isTimeEx=sets.every(s=>s.secs!=null&&s.secs!=="");
+      const isTimeEx=isTimeExercise(name,sets);
       if(isTimeEx)prs[name].isTime=true;
       sets.forEach(s=>{
         const r=parseFloat(s.reps)||0;
