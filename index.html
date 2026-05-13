@@ -35,7 +35,7 @@ async function sbLoad() {
       sbReq('GET', 'training_plans', null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1')
     ]);
     wLog = (logs || []).map(l => ({
-      id: l.id, plan: l.plan, date: l.date, totalSets: l.total_sets,
+      plan: l.plan, date: l.date, totalSets: l.total_sets,
       durationSecs: l.duration_secs, exercises: l.exercises || [], newPRs: l.new_prs || []
     }));
     sP    = (sp && sp[0]) ? sp[0].data : {};
@@ -80,52 +80,12 @@ async function sbSave() {
 
 async function sbSaveWorkout(entry) {
   try {
-    const res = await sbReq('POST', 'workout_logs', {
+    await sbReq('POST', 'workout_logs', {
       user_id: UID, plan: entry.plan, date: entry.date,
       total_sets: entry.totalSets, duration_secs: entry.durationSecs,
       exercises: entry.exercises, new_prs: entry.newPRs || []
     });
-    if (res && res[0] && res[0].id) entry.id = res[0].id;
-    return res;
   } catch(err) { console.error('Supabase workout save error:', err); }
-}
-
-async function sbUpdateWorkout(id, fields) {
-  try {
-    const patch = {};
-    if (fields.durationSecs !== undefined) patch.duration_secs = fields.durationSecs;
-    if (fields.date !== undefined) patch.date = fields.date;
-    if (fields.totalSets !== undefined) patch.total_sets = fields.totalSets;
-    if (fields.exercises !== undefined) patch.exercises = fields.exercises;
-    return await sbReq('PATCH', 'workout_logs', patch, 'id=eq.' + id);
-  } catch(err) { console.error('Supabase workout update error:', err); }
-}
-
-async function sbDeleteWorkout(id) {
-  try {
-    return await sbReq('DELETE', 'workout_logs', null, 'id=eq.' + id);
-  } catch(err) { console.error('Supabase workout delete error:', err); }
-}
-
-async function sbDeleteExerciseFromAllWorkouts(exName) {
-  // Local update: remove this exercise from every workout's exercises object
-  // Then push the updated exercises JSON back to Supabase for each affected workout.
-  const affected = [];
-  wLog.forEach(w => {
-    if (w.exercises && w.exercises[exName]) {
-      const removed = w.exercises[exName];
-      delete w.exercises[exName];
-      // Recalc totalSets
-      const newTotal = Object.values(w.exercises).reduce((a, sets) => a + (Array.isArray(sets) ? sets.length : 0), 0);
-      w.totalSets = newTotal;
-      affected.push({id: w.id, exercises: w.exercises, totalSets: newTotal});
-    }
-  });
-  for (const a of affected) {
-    if (a.id) await sbUpdateWorkout(a.id, {exercises: a.exercises, totalSets: a.totalSets});
-  }
-  try { localStorage.setItem('trainapp_cache', JSON.stringify({wLog,sP,rLog,plans})); } catch(e) {}
-  return affected.length;
 }
 
 // Migrate old localStorage data to Supabase (runs once)
@@ -547,7 +507,22 @@ function startW(id){
   if(wx.etimer.iv)clearInterval(wx.etimer.iv);
   const plan=plans[id]||DEFAULT_PLANS[id];
   const exs=plan?plan.exercises:[];
-  const ss=exs.map(ex=>ex.type==="separator"?[]:Array.from({length:ex.sets},()=>({reps:ex.reps!=null?String(ex.reps):"",kg:ex.kg!=null?String(ex.kg):"",secs:ex.secs!=null?String(ex.secs):null,done:false})));
+  // Find last workout with this plan to prefill values
+  const planLabel=(plans[id]||DEFAULT_PLANS[id]||{label:id?.toUpperCase()}).label;
+  const lastW=[...wLog].reverse().find(w=>w.plan===planLabel||w.plan===id?.toUpperCase());
+  const ss=exs.map(ex=>{
+    if(ex.type==="separator")return[];
+    const prevSets=lastW&&lastW.exercises&&lastW.exercises[ex.name];
+    return Array.from({length:ex.sets},(_, si)=>{
+      const prev=prevSets&&prevSets[si]?prevSets[si]:null;
+      return {
+        reps: prev&&prev.reps!=null&&prev.reps!==""?String(prev.reps):(ex.reps!=null?String(ex.reps):""),
+        kg:   prev&&prev.kg!=null&&prev.kg!==""?String(prev.kg):(ex.kg!=null?String(ex.kg):""),
+        secs: prev&&prev.secs!=null&&prev.secs!==""?String(prev.secs):(ex.secs!=null?String(ex.secs):null),
+        done:false
+      };
+    });
+  });
   wx={phase:"active",planId:id,exs,ss,etimer:{on:false,ei:0,total:0,left:0,iv:null},newPRs:[],startTime:Date.now(),clockIv:null};
   unlockAudio();
   wx.clockIv=setInterval(()=>{
@@ -974,28 +949,6 @@ function confirmFinishW(){
   const total=wx.ss.reduce((a,s,i)=>wx.exs[i]?.type==="separator"?a:a+s.length,0);
   const done=wx.ss.reduce((a,s,i)=>wx.exs[i]?.type==="separator"?a:a+s.filter(r=>r.done).length,0);
   const open=total-done;
-  const elapsed=wx.startTime?Math.floor((Date.now()-wx.startTime)/1000):0;
-  // If workout has been running for more than 4 hours, warn the user — likely forgotten to end
-  if(elapsed>14400){
-    const h=Math.floor(elapsed/3600),m=Math.floor((elapsed%3600)/60);
-    showModal(
-      "Sehr lange Trainingsdauer",
-      `Dieses Workout läuft seit ${h}h ${m}min. Hast du vergessen es zu beenden? Du kannst die Dauer nach dem Beenden in der Historie anpassen.`,
-      "TROTZDEM BEENDEN",
-      "#ff5c1a",
-      ()=>{
-        if(open===0){finishW();return;}
-        showModal(
-          "Training beenden?",
-          open+" Satz/Sätze sind noch nicht abgehakt. Trotzdem als abgeschlossen speichern?",
-          "BEENDEN",
-          "#ff5c1a",
-          ()=>{finishW();}
-        );
-      }
-    );
-    return;
-  }
   if(open===0){finishW();return;}
   showModal(
     "Training beenden?",
@@ -1626,87 +1579,6 @@ function pickExercise(idx){
     document.getElementById("app").innerHTML=historyHTML();
   }
 }
-function confirmDeleteExercise(exName){
-  const data=exerciseProgression(exName);
-  const count=data.length;
-  showModal(
-    "Übung löschen?",
-    `<b>${exName}</b> wird aus allen ${count} Trainingseinheiten entfernt. Diese Aktion kann nicht rückgängig gemacht werden.`,
-    "LÖSCHEN",
-    "#ff6b6b",
-    async ()=>{
-      const removed=await sbDeleteExerciseFromAllWorkouts(exName);
-      selectedEx=null;
-      statsView="progression";
-      document.getElementById("app").innerHTML=historyHTML();
-      console.log("Übung aus "+removed+" Workouts entfernt");
-    }
-  );
-}
-
-function openWorkoutEdit(idx){
-  const w=wLog[idx];
-  if(!w)return;
-  const totalMin=Math.round((w.durationSecs||0)/60);
-  const h=Math.floor(totalMin/60);
-  const m=totalMin%60;
-  let ov=document.getElementById("modal-ov");
-  if(!ov){ov=document.createElement("div");ov.id="modal-ov";document.body.appendChild(ov);}
-  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:300;padding:24px";
-  ov.innerHTML=`
-    <div style="background:#1e2029;border:1px solid #2c2f3d;border-radius:16px;padding:24px;width:100%;max-width:340px">
-      <div class="bc" style="font-weight:900;font-size:20px;letter-spacing:.5px;margin-bottom:4px">WORKOUT BEARBEITEN</div>
-      <div class="cp" style="font-size:13px;color:#7a7d8f;margin-bottom:18px">${w.plan} · ${w.date}</div>
-
-      <div class="bc" style="font-size:10px;letter-spacing:2px;color:#4a4d5e;margin-bottom:8px">DAUER</div>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:18px">
-        <input id="we-h" type="number" min="0" max="23" value="${h}" inputmode="numeric"
-          style="width:64px;padding:10px;background:#16181f;border:1px solid #2c2f3d;border-radius:8px;color:#eceae4;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:18px;text-align:center"/>
-        <span class="bc" style="color:#4a4d5e;font-size:13px">h</span>
-        <input id="we-m" type="number" min="0" max="59" value="${m}" inputmode="numeric"
-          style="width:64px;padding:10px;background:#16181f;border:1px solid #2c2f3d;border-radius:8px;color:#eceae4;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:18px;text-align:center"/>
-        <span class="bc" style="color:#4a4d5e;font-size:13px">min</span>
-      </div>
-
-      <div style="display:flex;gap:10px;margin-bottom:10px">
-        <button class="btn" style="flex:1;background:#252836;border:1px solid #3a3d50;color:#eceae4" onclick="closeModal()">ABBRECHEN</button>
-        <button class="btn" style="flex:1;background:#22c55e;color:#fff" onclick="saveWorkoutEdit(${idx})">SPEICHERN</button>
-      </div>
-      <button class="btn" style="width:100%;background:#ff6b6b22;border:1px solid #ff6b6b55;color:#ff6b6b;font-weight:800" onclick="confirmDeleteWorkout(${idx})">🗑 WORKOUT LÖSCHEN</button>
-    </div>`;
-  ov._cb=null;
-}
-
-async function saveWorkoutEdit(idx){
-  const w=wLog[idx];
-  if(!w){closeModal();return;}
-  const h=parseInt(document.getElementById("we-h")?.value)||0;
-  const m=parseInt(document.getElementById("we-m")?.value)||0;
-  const newSecs=h*3600+m*60;
-  w.durationSecs=newSecs;
-  if(w.id) await sbUpdateWorkout(w.id,{durationSecs:newSecs});
-  try { localStorage.setItem('trainapp_cache', JSON.stringify({wLog,sP,rLog,plans})); } catch(e) {}
-  closeModal();
-  document.getElementById("app").innerHTML=historyHTML();
-}
-
-function confirmDeleteWorkout(idx){
-  const w=wLog[idx];
-  if(!w)return;
-  closeModal();
-  showModal(
-    "Workout löschen?",
-    `<b>${w.plan}</b> vom ${w.date} wird komplett entfernt. Diese Aktion kann nicht rückgängig gemacht werden.`,
-    "LÖSCHEN",
-    "#ff6b6b",
-    async ()=>{
-      if(w.id) await sbDeleteWorkout(w.id);
-      wLog.splice(idx,1);
-      try { localStorage.setItem('trainapp_cache', JSON.stringify({wLog,sP,rLog,plans})); } catch(e) {}
-      document.getElementById("app").innerHTML=historyHTML();
-    }
-  );
-}
 function toggleMuscleIdx(idx){
   const sorted=Object.entries(muscleStats()).sort((a,b)=>b[1].sets-a[1].sets);
   if(idx>=0&&idx<sorted.length)toggleMuscle(sorted[idx][0]);
@@ -1823,24 +1695,11 @@ function historyHTML(){
       </div>`;
     })()}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 22px">
-      ${(()=>{
-        // Filter out abnormally long workouts (>4h) for average — they're likely forgotten-end errors
-        const validDur=wLog.filter(w=>w.durationSecs&&w.durationSecs>0&&w.durationSecs<=14400);
-        const avgSecs=validDur.length?Math.round(validDur.reduce((a,w)=>a+w.durationSecs,0)/validDur.length):0;
-        const longestSecs=validDur.length?Math.max(...validDur.map(w=>w.durationSecs)):0;
-        return [
-          [wLog.length,"WORKOUTS GESAMT"],
-          [wLog.reduce((a,w)=>a+(w.totalSets||0),0),"SÄTZE GESAMT"],
-          [avgSecs?fmtDur(avgSecs):"—","Ø DAUER"],
-          [longestSecs?fmtDur(longestSecs):"—","LÄNGSTES"],
-          [rLog.length,"LÄUFE"],
-          [km.toFixed(0)+" km","KM GESAMT"]
-        ].map(([v,l])=>`
-          <div style="background:#1e2029;border:1px solid #2c2f3d;border-radius:10px;padding:14px;text-align:center">
-            <div class="bc" style="font-weight:900;font-size:24px;color:#22c55e">${v}</div>
-            <div class="bc" style="font-size:8px;letter-spacing:1.5px;color:#4a4d5e;margin-top:2px">${l}</div>
-          </div>`).join("");
-      })()}
+      ${[[wLog.length,"WORKOUTS GESAMT"],[wLog.reduce((a,w)=>a+(w.totalSets||0),0),"SÄTZE GESAMT"],[rLog.length,"LÄUFE"],[km.toFixed(0)+" km","KM GESAMT"]].map(([v,l])=>`
+        <div style="background:#1e2029;border:1px solid #2c2f3d;border-radius:10px;padding:14px;text-align:center">
+          <div class="bc" style="font-weight:900;font-size:26px;color:#22c55e">${v}</div>
+          <div class="bc" style="font-size:8px;letter-spacing:1.5px;color:#4a4d5e;margin-top:2px">${l}</div>
+        </div>`).join("")}
     </div>
 
     <!-- 5 Feature Cards incl. Körperbereiche -->
@@ -1888,8 +1747,7 @@ function historyHTML(){
           <div class="bc" style="font-size:10px;letter-spacing:2px;color:#4a4d5e;margin:12px 0 6px">${label}</div>
           ${items.map(w=>{
             const planColor=(plans[w.plan?.toLowerCase()]||{color:"#22c55e"}).color;
-            const wIdx=wLog.indexOf(w);
-            return `<div class="card" style="margin-bottom:7px;display:flex;justify-content:space-between;align-items:center;border-color:${planColor}22;cursor:pointer" onclick="openWorkoutEdit(${wIdx})">
+            return `<div class="card" style="margin-bottom:7px;display:flex;justify-content:space-between;align-items:center;border-color:${planColor}22">
               <div>
                 <div class="bc" style="font-weight:700;font-size:15px;color:${planColor}">${w.plan}</div>
                 <div class="cp" style="font-size:11px;color:#7a7d8f">${w.date}${w.durationSecs?" · "+fmtDur(w.durationSecs):""}</div>
@@ -2171,8 +2029,6 @@ function progressionHTML(){
         const firstEntry=data[0];
         const maxRLast=lastEntry?lastEntry.maxReps:0;
         const maxRFirst=firstEntry?firstEntry.maxReps:0;
-        const isTimeEx=data.length>0&&data[0].isTime;
-        const unitLabel=isTimeEx?"Sek":"Wdhl";
         const trend=data.length>1?(maxRLast-maxRFirst>0?"↑":maxRLast-maxRFirst<0?"↓":"→"):"—";
         const trendColor=trend==="↑"?"#22c55e":trend==="↓"?"#ff6b6b":"#4a4d5e";
         return `<button onclick="pickExercise(${idx})"
@@ -2185,7 +2041,7 @@ function progressionHTML(){
           </div>
           <div style="text-align:right">
             <div class="bc" style="font-size:28px;font-weight:900;color:${trendColor}">${trend}</div>
-            ${data.length>1?`<div class="bc" style="font-size:11px;color:#4a4d5e">${maxRFirst}→${maxRLast} ${unitLabel}</div>`:""}
+            ${data.length>1?`<div class="bc" style="font-size:11px;color:#4a4d5e">${maxRFirst}→${maxRLast} Wdhl</div>`:""}
           </div>
         </button>`;
       }).join("")}
@@ -2216,8 +2072,6 @@ function progressionDetailHTML(ex){
   return `<div class="screen" style="padding-top:16px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
       <button onclick="selectedEx=null;setStatsView('progression')" style="background:#252836;border:none;color:#6a6d80;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px">← ALLE</button>
-      <div style="flex:1"></div>
-      <button onclick="confirmDeleteExercise('${ex.replace(/'/g,"\\'")}')" style="background:#ff6b6b22;border:1px solid #ff6b6b55;color:#ff6b6b;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px;font-weight:800">🗑 LÖSCHEN</button>
     </div>
     <div class="bc" style="font-weight:900;font-size:26px;color:#22c55e;letter-spacing:.5px;margin-bottom:12px">${ex}</div>
     ${!isTime?`<div style="display:flex;gap:8px;margin-bottom:14px">
