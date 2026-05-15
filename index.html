@@ -34,10 +34,17 @@ async function sbLoad() {
       sbReq('GET', 'run_logs', null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1'),
       sbReq('GET', 'training_plans', null, 'user_id=eq.' + UID + '&order=updated_at.desc&limit=1')
     ]);
-    wLog = (logs || []).map(l => ({
-      plan: l.plan, date: l.date, totalSets: l.total_sets,
-      durationSecs: l.duration_secs, exercises: l.exercises || [], newPRs: l.new_prs || []
-    }));
+    wLog = (logs || []).map(l => {
+      // exercises may be stored as array [{name,sets}] or object {name:[sets]}
+      let exObj=l.exercises||{};
+      if(Array.isArray(exObj)){
+        const o={};
+        exObj.forEach(e=>{if(e&&e.name)o[e.name]=e.sets||[];});
+        exObj=o;
+      }
+      return {plan:l.plan,date:l.date,totalSets:l.total_sets,
+              durationSecs:l.duration_secs,exercises:exObj,newPRs:l.new_prs||[]};
+    });
     sP    = (sp && sp[0]) ? sp[0].data : {};
     rLog  = (rl && rl[0]) ? rl[0].data : [];
     plans = (tp && tp[0]) ? tp[0].data : JSON.parse(JSON.stringify(DEFAULT_PLANS));
@@ -986,14 +993,11 @@ function deleteSet(ei,si){
 }
 
 function lastSets(exName){
-  for(let i=wLog.length-1;i>=0;i--){
-    const w=wLog[i];
-    const wPlanLabel=(plans[wx.planId]||DEFAULT_PLANS[wx.planId]||{label:wx.planId?.toUpperCase()}).label;
-    if((w.plan===wx.planId?.toUpperCase()||w.plan===wPlanLabel)&&w.exercises&&w.exercises[exName]&&w.exercises[exName].length>0){
-      return w.exercises[exName];
-    }
-  }
-  return null;
+  const wPlanLabel=(plans[wx.planId]||DEFAULT_PLANS[wx.planId]||{label:wx.planId?.toUpperCase()}).label;
+  // wLog comes from Supabase desc order, so first match = most recent
+  const match=wLog.find(w=>(w.plan===wx.planId?.toUpperCase()||w.plan===wPlanLabel)
+    &&w.exercises&&w.exercises[exName]&&w.exercises[exName].length>0);
+  return match?match.exercises[exName]:null;
 }
 
 function wDoneHTML(){
