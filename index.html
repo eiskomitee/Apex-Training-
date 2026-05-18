@@ -95,6 +95,26 @@ async function sbSaveWorkout(entry) {
   } catch(err) { console.error('Supabase workout save error:', err); }
 }
 
+async function sbSaveMobility(entry) {
+  try {
+    await sbReq('POST', 'mobility_logs', {
+      user_id: UID, date: entry.date, duration_secs: entry.durationSecs||null
+    });
+  } catch(err) { console.error('Supabase mobility save error:', err); }
+}
+
+async function sbLoadMobility() {
+  try {
+    const rows = await sbReq('GET', 'mobility_logs', null, 'user_id=eq.' + UID + '&order=created_at.desc');
+    mLog = (rows||[]).map(r=>({date:r.date,durationSecs:r.duration_secs}));
+    try { localStorage.setItem('trainapp_mobility', JSON.stringify(mLog)); } catch(e) {}
+  } catch(err) {
+    console.error('Supabase mobility load error:', err);
+    try { mLog = JSON.parse(localStorage.getItem('trainapp_mobility')||'[]'); }
+    catch(e) { mLog = []; }
+  }
+}
+
 // Migrate old localStorage data to Supabase (runs once)
 async function migrateIfNeeded() {
   try {
@@ -271,8 +291,25 @@ const SKILLS={
   ]},
 };
 
+/* MOBILITY ROUTINE */
+const MOBILITY_COLOR="#a78bfa";
+const MOBILITY_ROUTINE=[
+  {name:"Cat-Cow",duration:60,note:"Langsam, mit Atmung — Buckel und Durchhang im Wechsel"},
+  {name:"Thoracic Rotations",duration:60,note:"Vierfüßler, Hand hinter Kopf, Ellbogen zur Decke — 8 pro Seite"},
+  {name:"Couch Stretch",duration:75,perSide:true,note:"Becken aktiv kippen (Po anspannen), sonst dehnst du den Rücken"},
+  {name:"PNF Hamstring",duration:90,perSide:true,note:"5 Sek gegen Gurt drücken, entspannen, tiefer ziehen — 3 Zyklen pro Bein"},
+  {name:"Prayer Stretch",duration:60,note:"Unterarme auf Sofa/Bett, Hüfte über Knien, Brust Richtung Boden sinken lassen"},
+  {name:"Sprunggelenk-Stretch",duration:45,note:"Aus Prayer-Position: Gewicht nach hinten verlagern, Fersen Richtung Boden"},
+  {name:"Towel Stretch",duration:45,perSide:true,note:"Handtuch über Schulter, beide Hände greifen — aktiv ziehen, dann PNF: 5s drücken, tiefer"},
+  {name:"90/90 PNF",duration:60,perSide:true,note:"Vorderes Knie aktiv in Boden drücken (5-10s), entspannen, tiefer lehnen"},
+  {name:"Shoulder Dislocates",duration:60,note:"Stock oder Band breit greifen, langsam über Kopf nach hinten und zurück — 10 Wdh"},
+  {name:"Jefferson Curl",duration:90,note:"Mit 16kg KB, Wirbel für Wirbel abrollen — 5-6 Wdh, sehr langsam"},
+  {name:"Dead Hang",duration:45,note:"Passiv hängen, Schultern loslassen, Wirbelsäule dekomprimieren"}
+];
+const MOBILITY_TOTAL_MIN=Math.round(MOBILITY_ROUTINE.reduce((a,e)=>a+e.duration*(e.perSide?2:1),0)/60);
+
 /* STORAGE */
-let wLog=[], sP={}, rLog=[];
+let wLog=[], sP={}, rLog=[], mLog=[];
 // Plans are editable – stored in localStorage, fallback to built-in
 let plans={};
 const DEFAULT_PLANS={
@@ -320,13 +357,14 @@ function render(){
   if(tab==="home")app.innerHTML=homeHTML();
   else if(tab==="workout")renderWorkout();
   else if(tab==="skills")renderSkills();
+  else if(tab==="mobility")renderMobility();
   else if(tab==="runs"){runsView="list";app.innerHTML=runsHTML();}
   else if(tab==="history")app.innerHTML=historyHTML();
   else if(tab==="editor")app.innerHTML=editorHTML();
 }
 function renderNav(){
   document.getElementById("nav").innerHTML=
-    [["home","⚡","HOME"],["workout","📋","HISTORIE"],["skills","🤸","SKILLS"],["runs","🏃","LAUFEN"],["history","📊","STATS"],["editor","✏️","PLÄNE"]]
+    [["home","⚡","HOME"],["workout","📋","HISTORIE"],["skills","🤸","SKILLS"],["mobility","🧘","MOBILITY"],["runs","🏃","LAUFEN"],["history","📊","STATS"],["editor","✏️","PLÄNE"]]
     .map(([id,ic,lb])=>`<div class="nav-item" onclick="go('${id}')">
       <div style="font-size:18px">${ic}</div>
       <div style="font-family:'Barlow Condensed',sans-serif;font-size:9px;letter-spacing:1.5px;color:${tab===id?"#22c55e":"#444"};margin-top:2px">${lb}</div>
@@ -362,6 +400,12 @@ function homeHTML(){
     const d=new Date(+p[2],+p[1]-1,+p[0]);
     return d>=weekStart&&d<weekEnd;
   });
+  const mLogWeek=mLog.filter(m=>{
+    const p=m.date.split(".");
+    if(p.length<3)return false;
+    const d=new Date(+p[2],+p[1]-1,+p[0]);
+    return d>=weekStart&&d<weekEnd;
+  });
   const weekWorkouts=wLogWeek.length;
   const weekKm=rLogWeek.reduce((a,r)=>a+(r.km||0),0);
   // Active days this week – build a set of date strings per weekday
@@ -379,14 +423,15 @@ function homeHTML(){
     const hasWorkout=wLogWeek.some(w=>w.date===dateStr&&w.plan!=="ROWING");
     const hasRowing=wLogWeek.some(w=>w.date===dateStr&&(w.plan==="ROWING"||w.plan==="RUDERN"));
     const hasRun=rLogWeek.some(r=>r.date===dateStr);
-    const active=hasWorkout||hasRowing||hasRun;
+    const hasMob=mLogWeek.some(m=>m.date===dateStr);
+    const active=hasWorkout||hasRowing||hasRun||hasMob;
     const workoutEntry=wLogWeek.find(w=>w.date===dateStr&&w.plan!=="ROWING");
     const workoutColor=workoutEntry ? (() => {
       const planKey=Object.keys(plans).find(k=>plans[k].label===workoutEntry.plan);
       return (planKey && plans[planKey] && plans[planKey].color) ? plans[planKey].color : "#22c55e";
     })() : "#22c55e";
     const dot=hasWorkout?workoutColor:hasRowing?"#ff5c1a":hasRun?"#3b82f6":null;
-    return {label,isToday,active,dot,dateStr,hasWorkout,hasRowing,hasRun,workoutColor};
+    return {label,isToday,active,dot,dateStr,hasWorkout,hasRowing,hasRun,hasMob,workoutColor};
   });
 
   // All-time totals
@@ -427,12 +472,13 @@ function homeHTML(){
               ${d.hasWorkout?`<div style="width:7px;height:7px;border-radius:50%;background:${d.workoutColor||"#22c55e"}"></div>`:""}
               ${d.hasRowing?`<div style="width:7px;height:7px;border-radius:50%;background:#ff5c1a"></div>`:""}
               ${d.hasRun?`<div style="width:7px;height:7px;border-radius:50%;background:#3b82f6"></div>`:""}
-              ${!d.hasWorkout&&!d.hasRowing&&!d.hasRun&&d.isToday?`<div style="width:5px;height:5px;border-radius:50%;background:#3a3d50"></div>`:""}
+              ${d.hasMob?`<div style="width:7px;height:7px;border-radius:50%;background:#a78bfa"></div>`:""}
+              ${!d.hasWorkout&&!d.hasRowing&&!d.hasRun&&!d.hasMob&&d.isToday?`<div style="width:5px;height:5px;border-radius:50%;background:#3a3d50"></div>`:""}
             </div>
           </div>`).join("")}
       </div>
       <!-- Legend -->
-      <div style="display:flex;gap:12px;margin-top:10px;justify-content:center">
+      <div style="display:flex;gap:10px;margin-top:10px;justify-content:center;flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:4px">
           <div style="width:7px;height:7px;border-radius:50%;background:#22c55e"></div>
           <span class="bc" style="font-size:8px;color:#4a4d5e;letter-spacing:.5px">WORKOUT</span>
@@ -444,6 +490,10 @@ function homeHTML(){
         <div style="display:flex;align-items:center;gap:4px">
           <div style="width:7px;height:7px;border-radius:50%;background:#3b82f6"></div>
           <span class="bc" style="font-size:8px;color:#4a4d5e;letter-spacing:.5px">LAUF</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <div style="width:7px;height:7px;border-radius:50%;background:#a78bfa"></div>
+          <span class="bc" style="font-size:8px;color:#4a4d5e;letter-spacing:.5px">MOBILITY</span>
         </div>
       </div>
     </div>
@@ -1148,6 +1198,292 @@ function showModal(title,body,confirmTxt,confirmColor,onConfirm){
 }
 function closeModal(){const ov=document.getElementById("modal-ov");if(ov)ov.remove();}
 function modalConfirm(){const ov=document.getElementById("modal-ov");if(ov&&ov._cb){ov._cb();ov.remove();}}
+
+/* ══ MOBILITY ══ */
+let mx={active:false,curIdx:0,side:0,tRun:false,tLeft:0,timer:null,sessionStart:0};
+
+function renderMobility(){
+  document.getElementById("app").innerHTML=mx.active?mobilitySessionHTML():mobilityListHTML();
+}
+
+function mobilityListHTML(){
+  // Wochen-Anzeige
+  const today=new Date();
+  const dow=today.getDay();
+  const diffToMon=dow===0?6:dow-1;
+  const weekStart=new Date(today);
+  weekStart.setHours(0,0,0,0);
+  weekStart.setDate(today.getDate()-diffToMon);
+  const weekEnd=new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate()+7);
+
+  const mLogWeek=mLog.filter(m=>{
+    const p=m.date.split(".");
+    if(p.length<3)return false;
+    const d=new Date(+p[2],+p[1]-1,+p[0]);
+    return d>=weekStart&&d<weekEnd;
+  });
+  const weekCount=new Set(mLogWeek.map(m=>m.date)).size;
+  const todayStr=today.toLocaleDateString("de-DE");
+  const doneToday=mLog.some(m=>m.date===todayStr);
+
+  return `<div class="screen">
+    <div class="h1" style="margin-bottom:4px">MOBILITY</div>
+    <div class="cp" style="color:#7a7d8f;margin-bottom:18px;font-size:14px">Ganzheitliche Routine — ${MOBILITY_TOTAL_MIN} Min</div>
+
+    <!-- Wochen-Tracking -->
+    <div class="card" style="margin-bottom:14px;border-color:${MOBILITY_COLOR}33">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div class="bc" style="font-size:9px;letter-spacing:2px;color:#4a4d5e">DIESE WOCHE</div>
+          <div class="bc" style="font-weight:900;font-size:32px;color:${MOBILITY_COLOR};line-height:1">${weekCount}/5</div>
+        </div>
+        <div style="text-align:right">
+          <div class="bc" style="font-size:9px;letter-spacing:2px;color:#4a4d5e">HEUTE</div>
+          <div class="bc" style="font-weight:900;font-size:20px;color:${doneToday?MOBILITY_COLOR:"#4a4d5e"}">${doneToday?"✓ ERLEDIGT":"OFFEN"}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Start-Button -->
+    <button class="btn" style="background:${MOBILITY_COLOR};color:#fff;width:100%;padding:14px;font-size:14px;margin-bottom:22px" onclick="startMobilitySession()">
+      ${doneToday?"NOCHMAL STARTEN":"ROUTINE STARTEN"} →
+    </button>
+
+    <!-- Übungs-Übersicht -->
+    <div class="lbl" style="margin-bottom:8px">DIE ÜBUNGEN</div>
+    ${MOBILITY_ROUTINE.map((ex,i)=>`
+      <div class="card" style="margin-bottom:8px;padding:11px 13px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
+          <div style="display:flex;gap:8px;align-items:center;flex:1">
+            <span class="bc" style="font-weight:800;font-size:11px;color:${MOBILITY_COLOR};min-width:18px">${i+1}.</span>
+            <span class="bc" style="font-weight:700;font-size:14px">${ex.name}</span>
+          </div>
+          <span class="bc" style="font-size:11px;color:#7a7d8f">${ex.duration}s${ex.perSide?" ×2":""}</span>
+        </div>
+        <div class="cp" style="font-size:11px;color:#7a7d8f;margin-left:26px;line-height:1.4">${ex.note}</div>
+      </div>`).join("")}
+
+    <div style="height:20px"></div>
+
+    <!-- Manuell als gemacht markieren -->
+    <button class="btn" style="background:#252836;border:1px solid #3a3d50;color:#7a7d8f;width:100%;padding:10px;font-size:12px" onclick="confirmMarkMobility()">
+      ${doneToday?"HEUTIGEN EINTRAG LÖSCHEN":"OHNE TIMER ALS GEMACHT MARKIEREN"}
+    </button>
+
+    <div style="height:24px"></div>
+
+    <!-- Letzte Sessions -->
+    ${mLog.length>0?`
+      <div class="lbl" style="margin-bottom:8px">LETZTE SESSIONS</div>
+      <div class="card">
+        ${mLog.slice(0,10).map(m=>{
+          const dur=m.durationSecs?Math.round(m.durationSecs/60)+" min":"manuell";
+          return `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #252836">
+            <span class="bc" style="font-size:13px">${m.date}</span>
+            <span class="bc" style="font-size:12px;color:#7a7d8f">${dur}</span>
+          </div>`;
+        }).join("")}
+      </div>
+    `:""}
+
+    <div style="height:20px"></div>
+  </div>`;
+}
+
+function mobilitySessionHTML(){
+  const ex=MOBILITY_ROUTINE[mx.curIdx];
+  const totalSteps=MOBILITY_ROUTINE.reduce((a,e)=>a+(e.perSide?2:1),0);
+  let curStep=0;
+  for(let i=0;i<mx.curIdx;i++)curStep+=MOBILITY_ROUTINE[i].perSide?2:1;
+  curStep+=mx.side+1;
+  const progress=(curStep/totalSteps)*100;
+  const isLast=mx.curIdx===MOBILITY_ROUTINE.length-1&&(!ex.perSide||mx.side===1);
+  const sideLabel=ex.perSide?(mx.side===0?" — LINKS":" — RECHTS"):"";
+
+  return `<div class="screen" style="padding-top:16px">
+    <div style="display:flex;align-items:center;gap:9px;margin-bottom:14px">
+      <button onclick="cancelMobility()" style="background:#252836;border:none;color:#6a6d80;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-size:11px;letter-spacing:1px">← ABBRECHEN</button>
+      <span class="bc" style="font-size:11px;color:#7a7d8f;letter-spacing:1px">${curStep} / ${totalSteps}</span>
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="progress-bar" style="height:4px;margin-bottom:18px"><div class="bar-fill" style="width:${progress}%;background:${MOBILITY_COLOR}"></div></div>
+
+    <!-- Aktuelle Übung -->
+    <div class="card" style="border-color:${MOBILITY_COLOR}33;text-align:center;margin-bottom:14px;padding:24px 16px">
+      <div class="bc" style="font-size:10px;letter-spacing:2px;color:#4a4d5e;margin-bottom:6px">ÜBUNG ${mx.curIdx+1}${sideLabel}</div>
+      <div class="bc" style="font-weight:900;font-size:26px;color:${MOBILITY_COLOR};line-height:1.1;margin-bottom:14px">${ex.name}</div>
+      <div id="mxnum" class="bc" style="font-weight:900;font-size:72px;color:${MOBILITY_COLOR};line-height:1">${mx.tLeft}s</div>
+      <div class="bc" style="font-size:9px;letter-spacing:2px;color:#4a4d5e;margin-bottom:14px;margin-top:4px">VERBLEIBEND</div>
+      <div style="display:flex;gap:8px;justify-content:center">
+        <button id="mxbtn" class="btn" style="background:${mx.tRun?"#252836":MOBILITY_COLOR};border:1px solid ${MOBILITY_COLOR};color:${mx.tRun?MOBILITY_COLOR:"#fff"}" onclick="togMxTimer()">${mx.tRun?"PAUSE":"START"}</button>
+        <button class="btn" style="background:#252836;border:1px solid #3a3d50;color:#6a6d80" onclick="skipMxStep()">${isLast?"FERTIG ✓":"WEITER →"}</button>
+      </div>
+    </div>
+
+    <!-- Hinweis -->
+    <div class="card" style="margin-bottom:14px">
+      <div class="bc" style="font-size:9px;letter-spacing:2px;color:#4a4d5e;margin-bottom:6px">HINWEIS</div>
+      <div class="cp" style="font-size:13px;color:#eceae4;line-height:1.5">${ex.note}</div>
+    </div>
+
+    <!-- Nächste Übung Vorschau -->
+    ${!isLast?(()=>{
+      let nextIdx=mx.curIdx,nextSide=mx.side;
+      if(ex.perSide&&mx.side===0){nextSide=1;}
+      else{nextIdx++;nextSide=0;}
+      const nx=MOBILITY_ROUTINE[nextIdx];
+      const nxSideLbl=nx&&nx.perSide?(nextSide===0?" (links)":" (rechts)"):"";
+      return `<div style="text-align:center">
+        <span class="bc" style="font-size:10px;color:#4a4d5e;letter-spacing:1.5px">ALS NÄCHSTES: </span>
+        <span class="bc" style="font-size:11px;color:#7a7d8f">${nx.name}${nxSideLbl}</span>
+      </div>`;
+    })():""}
+
+    <div style="height:24px"></div>
+  </div>`;
+}
+
+function startMobilitySession(){
+  mx.active=true;
+  mx.curIdx=0;
+  mx.side=0;
+  mx.tLeft=MOBILITY_ROUTINE[0].duration;
+  mx.tRun=false;
+  mx.sessionStart=Date.now();
+  clearInterval(mx.timer);
+  renderMobility();
+}
+
+function togMxTimer(){
+  mx.tRun=!mx.tRun;
+  if(mx.tRun){
+    mx.timer=setInterval(()=>{
+      mx.tLeft--;
+      const e=document.getElementById("mxnum");
+      if(e)e.textContent=mx.tLeft+"s";
+      if(mx.tLeft<=0){
+        // Audio-Beep falls möglich
+        try{playBeep();}catch(e){}
+        clearInterval(mx.timer);
+        mx.tRun=false;
+        // Auto-advance
+        advanceMxStep();
+      }
+    },1000);
+  } else clearInterval(mx.timer);
+  const b=document.getElementById("mxbtn");
+  if(b){
+    b.style.background=mx.tRun?"#252836":MOBILITY_COLOR;
+    b.style.color=mx.tRun?MOBILITY_COLOR:"#fff";
+    b.textContent=mx.tRun?"PAUSE":"START";
+  }
+}
+
+function skipMxStep(){
+  clearInterval(mx.timer);
+  mx.tRun=false;
+  advanceMxStep();
+}
+
+function advanceMxStep(){
+  const ex=MOBILITY_ROUTINE[mx.curIdx];
+  // Seite wechseln oder nächste Übung
+  if(ex.perSide&&mx.side===0){
+    mx.side=1;
+    mx.tLeft=ex.duration;
+  } else {
+    if(mx.curIdx>=MOBILITY_ROUTINE.length-1){
+      // Session fertig
+      finishMobilitySession();
+      return;
+    }
+    mx.curIdx++;
+    mx.side=0;
+    mx.tLeft=MOBILITY_ROUTINE[mx.curIdx].duration;
+  }
+  renderMobility();
+}
+
+function cancelMobility(){
+  clearInterval(mx.timer);
+  mx.active=false;
+  mx.tRun=false;
+  renderMobility();
+}
+
+function finishMobilitySession(){
+  const durSecs=Math.round((Date.now()-mx.sessionStart)/1000);
+  const todayStr=new Date().toLocaleDateString("de-DE");
+  // Nur speichern wenn heute noch kein Eintrag existiert
+  if(!mLog.some(m=>m.date===todayStr)){
+    const entry={date:todayStr,durationSecs:durSecs};
+    mLog.unshift(entry);
+    try{localStorage.setItem('trainapp_mobility',JSON.stringify(mLog));}catch(e){}
+    sbSaveMobility(entry);
+  }
+  clearInterval(mx.timer);
+  mx.active=false;
+  mx.tRun=false;
+  showModal(
+    "Routine abgeschlossen! 🧘",
+    "Gut gemacht. Du hast die komplette Mobility-Routine durchgezogen.",
+    "OK",
+    MOBILITY_COLOR,
+    ()=>{renderMobility();}
+  );
+}
+
+function confirmMarkMobility(){
+  const todayStr=new Date().toLocaleDateString("de-DE");
+  const existing=mLog.findIndex(m=>m.date===todayStr);
+  if(existing>=0){
+    // Eintrag für heute löschen
+    showModal(
+      "Eintrag löschen?",
+      "Möchtest du den heutigen Mobility-Eintrag wirklich löschen?",
+      "LÖSCHEN",
+      "#ef4444",
+      ()=>{
+        mLog.splice(existing,1);
+        try{localStorage.setItem('trainapp_mobility',JSON.stringify(mLog));}catch(e){}
+        // Aus Supabase löschen
+        sbReq('DELETE','mobility_logs',null,'user_id=eq.'+UID+'&date=eq.'+encodeURIComponent(todayStr)).catch(e=>console.error(e));
+        renderMobility();
+      }
+    );
+  } else {
+    showModal(
+      "Als gemacht markieren?",
+      "Heute als Mobility-Tag eintragen — ohne Timer-Session.",
+      "JA, EINTRAGEN",
+      MOBILITY_COLOR,
+      ()=>{
+        const entry={date:todayStr,durationSecs:null};
+        mLog.unshift(entry);
+        try{localStorage.setItem('trainapp_mobility',JSON.stringify(mLog));}catch(e){}
+        sbSaveMobility(entry);
+        renderMobility();
+      }
+    );
+  }
+}
+
+function playBeep(){
+  // Kurzer Beep-Sound mit Web Audio API
+  try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const o=ctx.createOscillator();
+    const g=ctx.createGain();
+    o.connect(g);g.connect(ctx.destination);
+    o.frequency.value=800;
+    g.gain.setValueAtTime(0.3,ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.01,ctx.currentTime+0.3);
+    o.start(ctx.currentTime);
+    o.stop(ctx.currentTime+0.3);
+  }catch(e){}
+}
 
 /* ══ RUNS ══ */
 // Run view state
@@ -2587,6 +2923,8 @@ migrateIfNeeded().then(() => {
     }
   }catch{}
   return sbLoad();
+}).then(() => {
+  return sbLoadMobility();
 }).then(() => {
   render();
 }).catch(err => {
