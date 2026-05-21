@@ -1200,7 +1200,37 @@ function closeModal(){const ov=document.getElementById("modal-ov");if(ov)ov.remo
 function modalConfirm(){const ov=document.getElementById("modal-ov");if(ov&&ov._cb){ov._cb();ov.remove();}}
 
 /* ══ MOBILITY ══ */
-let mx={active:false,curIdx:0,side:0,tRun:false,tLeft:0,timer:null,sessionStart:0};
+let mx={active:false,curIdx:0,side:0,tRun:false,tLeft:0,timer:null,sessionStart:0,wakeLock:null};
+
+async function requestWakeLock(){
+  try{
+    if('wakeLock' in navigator){
+      mx.wakeLock=await navigator.wakeLock.request('screen');
+      // Falls Display nochmal abdunkelt (z.B. Tab-Wechsel und zurück), neu anfordern
+      mx.wakeLock.addEventListener('release',()=>{
+        mx.wakeLock=null;
+      });
+    }
+  }catch(e){
+    console.log('Wake Lock nicht verfügbar:',e.message);
+  }
+}
+
+async function releaseWakeLock(){
+  try{
+    if(mx.wakeLock){
+      await mx.wakeLock.release();
+      mx.wakeLock=null;
+    }
+  }catch(e){}
+}
+
+// Wenn Browser-Tab zurück in den Vordergrund kommt, Wake Lock neu anfordern
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&mx.active&&mx.tRun&&!mx.wakeLock){
+    requestWakeLock();
+  }
+});
 
 function renderMobility(){
   document.getElementById("app").innerHTML=mx.active?mobilitySessionHTML():mobilityListHTML();
@@ -1359,6 +1389,7 @@ function startMobilitySession(){
 function togMxTimer(){
   mx.tRun=!mx.tRun;
   if(mx.tRun){
+    requestWakeLock();
     mx.timer=setInterval(()=>{
       mx.tLeft--;
       const e=document.getElementById("mxnum");
@@ -1372,7 +1403,10 @@ function togMxTimer(){
         advanceMxStep();
       }
     },1000);
-  } else clearInterval(mx.timer);
+  } else {
+    clearInterval(mx.timer);
+    releaseWakeLock();
+  }
   const b=document.getElementById("mxbtn");
   if(b){
     b.style.background=mx.tRun?"#252836":MOBILITY_COLOR;
@@ -1408,6 +1442,7 @@ function advanceMxStep(){
 
 function cancelMobility(){
   clearInterval(mx.timer);
+  releaseWakeLock();
   mx.active=false;
   mx.tRun=false;
   renderMobility();
@@ -1424,6 +1459,7 @@ function finishMobilitySession(){
     sbSaveMobility(entry);
   }
   clearInterval(mx.timer);
+  releaseWakeLock();
   mx.active=false;
   mx.tRun=false;
   showModal(
