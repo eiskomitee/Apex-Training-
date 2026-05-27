@@ -2705,6 +2705,7 @@ function edListHTML(){
           </div>
           <div style="display:flex;gap:8px">
             <button onclick="edState={planId:'${id}',view:'plan'};document.getElementById('app').innerHTML=editorHTML()" style="background:#252836;border:none;color:#eceae4;padding:7px 14px;border-radius:8px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:12px">BEARBEITEN</button>
+            <button onclick="duplicatePlan('${id}')" style="background:transparent;border:1px solid #3a3d50;color:#6a6d80;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:13px" title="Duplizieren">📋</button>
             ${Object.keys(plans).length>1?`<button onclick="deletePlan('${id}')" style="background:transparent;border:1px solid #3a3d50;color:#6a6d80;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:13px">🗑</button>`:""}
           </div>
         </div>`).join("")}
@@ -2943,6 +2944,19 @@ function deletePlan(id){
     edState={planId:null,view:"list"};
     document.getElementById("app").innerHTML=editorHTML();
   });
+}
+function duplicatePlan(id){
+  const src=plans[id];
+  if(!src)return;
+  const newId="plan_"+Date.now();
+  plans[newId]={
+    label:src.label+" (Kopie)",
+    color:src.color,
+    exercises:JSON.parse(JSON.stringify(src.exercises))
+  };
+  save();
+  edState={planId:newId,view:"plan"};
+  document.getElementById("app").innerHTML=editorHTML();
 }
 
 render();
