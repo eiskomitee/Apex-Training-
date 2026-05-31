@@ -564,9 +564,11 @@ function startW(id){
   if(wx.etimer.iv)clearInterval(wx.etimer.iv);
   const plan=plans[id]||DEFAULT_PLANS[id];
   const exs=plan?plan.exercises:[];
-  // Find last workout with this plan to prefill values
+  // Find last workout with this plan to prefill values.
+  // wLog is loaded from Supabase in created_at.desc order (newest first),
+  // so wLog.find() returns the MOST RECENT matching workout. (No .reverse()!)
   const planLabel=(plans[id]||DEFAULT_PLANS[id]||{label:id?.toUpperCase()}).label;
-  const lastW=[...wLog].reverse().find(w=>w.plan===planLabel||w.plan===id?.toUpperCase());
+  const lastW=wLog.find(w=>w.plan===planLabel||w.plan===id?.toUpperCase());
   const ss=exs.map(ex=>{
     if(ex.type==="separator")return[];
     const prevSets=lastW&&lastW.exercises&&lastW.exercises[ex.name];
@@ -2965,11 +2967,21 @@ render();
 migrateIfNeeded().then(() => {
   try{
     const wxd=JSON.parse(localStorage.getItem("trainapp_wx")||"null");
-    if(wxd&&wxd.phase==="active"&&wxd.planId&&wxd.exs&&wxd.ss){
+    // Only resume a *recent* in-progress workout. A session that was started
+    // but never finished or aborted must NOT live forever and keep showing its
+    // old prefilled values — otherwise it overrides startW() every time.
+    // Anything older than 6h (or missing a startTime) counts as abandoned:
+    // we delete it so the next start runs startW() fresh with the latest data.
+    const MAX_RESUME_MS=6*60*60*1000;
+    const isFresh=wxd&&wxd.startTime&&(Date.now()-wxd.startTime)<MAX_RESUME_MS;
+    if(wxd&&wxd.phase==="active"&&wxd.planId&&wxd.exs&&wxd.ss&&isFresh){
       wx={phase:"active",planId:wxd.planId,exs:wxd.exs,ss:wxd.ss,
           etimer:{on:false,ei:0,total:0,left:0,iv:null},
           newPRs:wxd.newPRs||[],startTime:wxd.startTime||Date.now(),clockIv:null};
       tab="workout";
+    }else{
+      // stale or invalid -> remove it so it can never resume again
+      try{localStorage.removeItem("trainapp_wx");}catch{}
     }
   }catch{}
   return sbLoad();
