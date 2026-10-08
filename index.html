@@ -563,7 +563,7 @@ let wx={phase:"select",planId:null,exs:[],ss:[],etimer:{on:false,ei:0,total:0,le
 function startW(id){
   if(wx.etimer.iv)clearInterval(wx.etimer.iv);
   const plan=plans[id]||DEFAULT_PLANS[id];
-  const exs=plan?plan.exercises:[];
+  const exs=plan?JSON.parse(JSON.stringify(plan.exercises)):[];
   // Find last workout with this plan to prefill values.
   // wLog is loaded from Supabase in created_at.desc order (newest first),
   // so wLog.find() returns the MOST RECENT matching workout. (No .reverse()!)
@@ -800,6 +800,9 @@ function wActiveHTML(){
       <div style="height:100%;width:${pct}%;background:${ac};transition:width .3s;border-radius:2px"></div>
     </div>
     ${wx.exs.map((ex,ei)=>exCardHTML(ex,ei,ac)).join("")}
+    <button onclick="openExPicker()" style="width:100%;background:transparent;border:1px dashed ${ac}66;border-radius:13px;padding:14px;margin:4px 0 6px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:14px;color:${ac};letter-spacing:1.5px">
+      + ÜBUNG HINZUFÜGEN
+    </button>
     <div style="margin-top:8px">
       ${!allDone&&done>0?`<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;padding:9px 14px;background:#252836;border-radius:9px">
         <span style="font-size:16px">⚠️</span>
@@ -844,6 +847,7 @@ function exCardHTML(ex,ei,ac){
       <div style="display:flex;align-items:center;gap:8px">
         ${isTime?`<button onclick="startExT(${ei})" style="background:${ac}22;border:1px solid ${ac}44;color:${ac};padding:5px 10px;border-radius:18px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:11px;letter-spacing:1px">⏱ TIMER</button>`:""}
         <span class="bc" style="font-size:12px;color:${allDone?ac:"#444"}">${doneN}/${sets.length}</span>
+        <button onclick="removeWEx(${ei})" aria-label="Übung entfernen" style="background:transparent;border:1px solid #2c2f3d;color:#4a4d5e;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center">✕</button>
       </div>
     </div>
     <div class="ex-card-bd">
@@ -1049,7 +1053,113 @@ function lastSets(exName){
   // wLog comes from Supabase desc order, so first match = most recent
   const match=wLog.find(w=>(w.plan===wx.planId?.toUpperCase()||w.plan===wPlanLabel)
     &&w.exercises&&w.exercises[exName]&&w.exercises[exName].length>0);
-  return match?match.exercises[exName]:null;
+  if(match)return match.exercises[exName];
+  const any=wLog.find(w=>w.exercises&&w.exercises[exName]&&w.exercises[exName].length>0);
+  return any?any.exercises[exName]:null;
+}
+
+/* FLEXIBLE SESSION: remove / add exercises (only this workout, plan stays unchanged) */
+function removeWEx(ei){
+  const ex=wx.exs[ei];if(!ex)return;
+  const doneN=(wx.ss[ei]||[]).filter(s=>s.done).length;
+  showModal("Übung entfernen?",
+    ex.name+" wird nur aus diesem Training entfernt, dein Plan bleibt gleich."+(doneN?" "+doneN+" abgehakte(r) Satz/Sätze gehen dabei verloren.":""),
+    "ENTFERNEN","#ff6b6b",()=>{
+      wx.exs.splice(ei,1);wx.ss.splice(ei,1);
+      renderWorkout();
+    });
+}
+let exPickList=[];
+function exPickCandidates(){
+  const inWx=new Set(wx.exs.filter(e=>e.type!=="separator").map(e=>e.name));
+  const map=new Map();
+  // 1) exercises from all plans (carry full config)
+  Object.values(plans).forEach(p=>(p.exercises||[]).forEach(ex=>{
+    if(ex.type==="separator"||!ex.name||map.has(ex.name))return;
+    map.set(ex.name,{ex:JSON.parse(JSON.stringify(ex)),src:p.label});
+  }));
+  // 2) exercises that only exist in history
+  allExerciseNames().forEach(n=>{
+    if(map.has(n))return;
+    const last=lastSets(n)||[];
+    const isT=isTimeExercise(n,last);
+    map.set(n,{ex:{name:n,type:isT?"time":"reps",sets:last.length||3,reps:isT?null:(+last[0]?.reps||10),secs:isT?(+last[0]?.secs||30):null,kg:+last[0]?.kg||null},src:"Verlauf"});
+  });
+  return [...map.values()].filter(c=>!inWx.has(c.ex.name)).sort((a,b)=>a.ex.name.localeCompare(b.ex.name,"de"));
+}
+function openExPicker(){
+  exPickList=exPickCandidates();
+  let ov=document.getElementById("expick");
+  if(!ov){ov=document.createElement("div");ov.id="expick";document.body.appendChild(ov);}
+  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:flex-end;justify-content:center;z-index:250";
+  ov.onclick=e=>{if(e.target===ov)closeExPicker();};
+  ov.innerHTML=`<div style="background:#1e2029;border:1px solid #2c2f3d;border-radius:18px 18px 0 0;width:100%;max-width:480px;max-height:85vh;display:flex;flex-direction:column;padding:18px 16px calc(16px + env(safe-area-inset-bottom,0px))">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div class="bc" style="font-weight:900;font-size:20px;color:#eceae4">Übung hinzufügen</div>
+      <button onclick="closeExPicker()" style="background:#252836;border:none;color:#7a7d8f;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:14px">✕</button>
+    </div>
+    <input id="expick-q" placeholder="Suchen oder neuen Namen eingeben" oninput="renderExPickList()" autocomplete="off"
+      style="width:100%;background:#16181f;border:1px solid #2c2f3d;border-radius:10px;padding:12px 14px;color:#eceae4;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:16px;outline:none;margin-bottom:10px"/>
+    <div id="expick-list" style="overflow-y:auto;flex:1;margin:0 -4px;padding:0 4px"></div>
+  </div>`;
+  renderExPickList();
+}
+function closeExPicker(){const ov=document.getElementById("expick");if(ov)ov.remove();}
+function renderExPickList(){
+  const q=(document.getElementById("expick-q")?.value||"").trim();
+  const ql=q.toLowerCase();
+  const ac=planAC();
+  const hits=exPickList.map((c,i)=>({c,i})).filter(({c})=>!ql||c.ex.name.toLowerCase().includes(ql));
+  const exact=exPickList.some(c=>c.ex.name.toLowerCase()===ql)||wx.exs.some(e=>e.name?.toLowerCase()===ql);
+  const esc=t=>String(t).replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+  let html="";
+  if(q&&!exact){
+    html+=`<div style="background:#16181f;border:1px dashed ${ac}66;border-radius:11px;padding:12px;margin-bottom:10px">
+      <div class="bc" style="font-weight:800;font-size:15px;color:#eceae4;margin-bottom:8px">Neu: ${esc(q)}</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="addCustomWEx('reps')" style="flex:1;padding:10px;border-radius:9px;border:1px solid ${ac}66;background:${ac}22;color:${ac};font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;cursor:pointer">+ MIT WDHL</button>
+        <button onclick="addCustomWEx('time')" style="flex:1;padding:10px;border-radius:9px;border:1px solid ${ac}66;background:${ac}22;color:${ac};font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:13px;cursor:pointer">+ MIT ZEIT</button>
+      </div>
+    </div>`;
+  }
+  html+=hits.map(({c,i})=>{
+    const ex=c.ex,isT=ex.type==="time";
+    return `<button onclick="addWEx(${i})" style="width:100%;display:flex;justify-content:space-between;align-items:center;gap:10px;background:transparent;border:none;border-bottom:1px solid #252836;padding:12px 4px;cursor:pointer;text-align:left">
+      <div>
+        <div class="bc" style="font-weight:800;font-size:15px;color:#eceae4">${esc(ex.name)}</div>
+        <div class="bc" style="font-size:10px;color:#4a4d5e;letter-spacing:1px;margin-top:2px">${ex.sets} SÄTZE · ${isT?(ex.secs||30)+"s":(ex.reps||"—")+" WDHL"}${ex.kg?" · "+ex.kg+"kg":""} · ${esc(c.src)}</div>
+      </div>
+      <span class="bc" style="font-size:20px;color:${ac};font-weight:800">+</span>
+    </button>`;
+  }).join("");
+  if(!hits.length&&!q)html+=`<div class="cp" style="font-size:13px;color:#7a7d8f;padding:16px 4px">Alle bekannten Übungen sind schon im Training. Gib oben einen Namen ein, um eine neue anzulegen.</div>`;
+  document.getElementById("expick-list").innerHTML=html;
+}
+function pushWEx(ex){
+  const prev=lastSets(ex.name);
+  const isT=ex.type==="time";
+  const n=Math.max(1,ex.sets||(prev?prev.length:3)||3);
+  const ss=Array.from({length:n},(_,si)=>{
+    const p=prev&&prev[si]?prev[si]:(prev&&prev.length?prev[prev.length-1]:null);
+    return {
+      reps:p&&p.reps!=null&&p.reps!==""?String(p.reps):(ex.reps!=null?String(ex.reps):""),
+      kg:p&&p.kg!=null&&p.kg!==""?String(p.kg):(ex.kg!=null?String(ex.kg):""),
+      secs:isT?(p&&p.secs!=null&&p.secs!==""?String(p.secs):String(ex.secs||30)):null,
+      done:false
+    };
+  });
+  wx.exs.push(ex);wx.ss.push(ss);
+  closeExPicker();
+  renderWorkout();
+  setTimeout(()=>{const cards=document.querySelectorAll(".ex-card");const c=cards[cards.length-1];if(c)c.scrollIntoView({behavior:"smooth",block:"center"});},50);
+}
+function addWEx(i){const c=exPickList[i];if(c)pushWEx(JSON.parse(JSON.stringify(c.ex)));}
+function addCustomWEx(type){
+  const name=(document.getElementById("expick-q")?.value||"").trim();
+  if(!name)return;
+  const ex=type==="time"?{name,type:"time",sets:3,secs:30,reps:null,kg:null}:{name,type:"reps",sets:3,reps:10,kg:null};
+  const m=MUSCLE_MAP[name];if(m)ex.muscle=Array.isArray(m.g)?m.g:[m.g];
+  pushWEx(ex);
 }
 
 function wDoneHTML(){
